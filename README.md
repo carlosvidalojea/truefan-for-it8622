@@ -30,13 +30,11 @@ All credit for the original concept and base implementation goes to the original
 
 ## Hardware Requirements
 
-- TrueNAS system with IT8622 (or compatible) SuperIO chip (Terramaster F4-423 tested)
+- TrueNAS system with IT8622 (or compatible) SuperIO chip
 - Fan connected to PWM channel 3 (`pwm3`)
 - `it87` kernel module support
 
-## Prerequisites
-
-Run these steps once on the TrueNAS host before deploying the container.
+## Prerequisites — run once on the TrueNAS host
 
 ### 1. Load the IT8622 driver at boot
 
@@ -65,26 +63,55 @@ Then add a second Init/Shutdown Script:
 nohup python3 /mnt/nas/apps/truefan/mail_webhook.py &
 ```
 
-### 3. Update mail_webhook.py with your NAS IP
+### 3. Update the NAS IP address
 
-Edit `/mnt/nas/apps/truefan/mail_webhook.py` and set `NAS_IP` to your TrueNAS IP address. This is the address the container uses to reach the webhook.
+Edit `app/mail_webhook.py` and `app/fan.py` replacing `192.168.0.157` with your TrueNAS IP address:
 
-Also update `fan.py` line:
+In `fan.py`:
 ```python
 MAIL_WEBHOOK = "http://<YOUR_NAS_IP>:5003/send"
 ```
 
-## Installation
+## Installation via TrueNAS Apps
 
-```bash
-git clone https://github.com/carlosvidalojea/truefan-for-it8622.git
-cd truefan-for-it8622
-docker compose up -d
+Go to **Apps > Discover Apps > Custom App** and paste the following `docker-compose.yaml`:
+
+```yaml
+services:
+  truefan:
+    container_name: truefan
+    image: carlosvidalojea/truefan-for-it8622:latest
+    ports:
+      - '5002:5002'
+    environment:
+      - TZ=Europe/Madrid
+    privileged: true
+    restart: unless-stopped
+    volumes:
+      - /sys:/sys
+      - /dev:/dev
+      - /etc/sensors3.conf:/etc/sensors3.conf:ro
+x-portals:
+  - host: 0.0.0.0
+    name: Web UI
+    path: /
+    port: 5002
+    scheme: http
 ```
+
+> ⚠️ Adjust `TZ` to your local timezone before deploying.
 
 Access the dashboard at `http://<NAS_IP>:5002`
 
 Default credentials: `admin` / `truefan`
+
+## Build from source
+
+```bash
+git clone https://github.com/carlosvidalojea/truefan-for-it8622.git
+cd truefan-for-it8622
+docker build -t truefan-for-it8622 .
+```
 
 ## File Structure
 
@@ -92,7 +119,7 @@ Default credentials: `admin` / `truefan`
 truefan-for-it8622/
 ├── Dockerfile
 ├── entrypoint.sh           # Container startup script
-├── docker-compose.yaml
+├── docker-compose.yaml     # For building locally
 ├── README.md
 └── app/
     ├── fan.py              # Fan control logic and sensor parser
