@@ -12,7 +12,7 @@ RUN apt-get update && \
     && apt-get clean
 
 # Install Python packages
-RUN pip3 install flask psutil gunicorn
+RUN pip3 install --no-cache-dir flask psutil gunicorn
 
 # Copy app and entrypoint
 COPY app /app

@@ -3,149 +3,168 @@
 <head>
   <title>TrueFan Dashboard</title>
   <meta charset="UTF-8">
-  <meta http-equiv="refresh" content="180">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%231565C0'/><circle cx='16' cy='16' r='3' fill='white'/><path d='M16 13 Q19 8 23 10 Q21 14 18 14Z' fill='white'/><path d='M16 13 Q19 8 23 10 Q21 14 18 14Z' fill='white' transform='rotate(120 16 16)'/><path d='M16 13 Q19 8 23 10 Q21 14 18 14Z' fill='white' transform='rotate(240 16 16)'/></svg>">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 0;
-      background-color: #fff;
-    }
-    .container {
-      margin: 0 auto;
-      max-width: 1200px;
-      padding: 2rem;
-    }
-    h1, h2 {
-      color: #333;
-    }
-    ul { list-style: none; padding-left: 0; }
-    li { margin: 0.5rem 0; display: flex; align-items: center; gap: 0.5rem; }
-    .button {
-      display: inline-block;
-      padding: 0.5rem 1rem;
-      background-color: #007BFF;
-      color: white;
-      text-decoration: none;
-      border-radius: 4px;
-    }
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #fff; }
+    .container { margin: 0 auto; max-width: 1200px; padding: 1rem 2rem; }
+    h2 { font-size: 0.75rem; margin: 0 0 0.4rem; text-transform: uppercase; letter-spacing: 0.04em; color: #666; }
+    ul { list-style: none; padding-left: 0; margin: 0; }
+    li { margin: 0.15rem 0; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; }
+    .header { display: flex; justify-content: space-between; align-items: stretch; margin-bottom: 0.75rem; }
+    .header h1 { margin: 0; font-size: 1.3rem; color: #333; align-self: center; }
+    .header-buttons { display: flex; align-items: stretch; gap: 6px; }
+    .header-buttons button { align-self: stretch; }
+    .button { display: inline-block; padding: 0.35rem 0.75rem; background-color: #007BFF; color: white; text-decoration: none; border-radius: 4px; border: none; cursor: pointer; font-size: 0.85rem; }
     .button:hover { background-color: #0056b3; }
-    button {
-      padding: 0.5rem 1rem;
-      background-color: #28a745;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
+    button { padding: 0.35rem 0.75rem; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
     button:hover { background-color: #1e7e34; }
-    .danger { background-color: #dc3545; }
-    .danger:hover { background-color: #b02a37; }
-    .section { margin-bottom: 2rem; }
-    .slider { width: 200px; }
-    canvas { max-width: 100%; margin-top: 1rem; }
+    .neutral { background-color: #6c757d; }
+    .neutral:hover { background-color: #545b62; }
+    .top-row { display: grid; grid-template-columns: 0.8fr 1.2fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem; }
+    .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.6rem 0.9rem; background: #f9f9f9; }
+    .card p { margin: 0.2rem 0; font-size: 0.85rem; }
+    .profile-btns { display: flex; gap: 6px; margin-top: 4px; }
+    @media (max-width: 799px) {
+      .profile-btns { flex-wrap: wrap; }
+      .top-row { grid-template-columns: 1fr; }
+      .header-buttons { flex-wrap: wrap; }
+    }
+    .sensor-row { display: grid; grid-template-columns: 160px 1fr; gap: 0.75rem; align-items: center; margin-bottom: 0.6rem; }
+    .sensor-label { font-size: 0.9rem; font-weight: bold; color: #333; margin-bottom: 0.2rem; }
+    .sensor-legends { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+    .sensor-legend { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; color: #888; }
+    .legend-line { display: inline-block; width: 20px; height: 2px; border-radius: 1px; flex-shrink: 0; }
+    .slider { width: 100px; }
+    .pwm-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.3rem; }
+    canvas { max-width: 100%; }
     .hidden { display: none; }
-    .alert {
-      padding: 1rem;
-      margin: 1rem 0;
-      border-radius: 4px;
-      background-color: #f8d7da;
-      border: 1px solid #f5c6cb;
-      color: #721c24;
-    }
-    .dark-mode {
-      background-color: #121212;
-      color: #f0f0f0;
-    }
-    .dark-mode .alert {
-      background-color: #3a1e1e;
-      color: #ffcccc;
-    }
-    .active-profile {
-      background-color: #28a745 !important;
-      color: white !important;
-      border: 2px solid #1e7e34 !important;
-    }
+    .alert { padding: 0.6rem 1rem; margin: 0.5rem 0; border-radius: 4px; background-color: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; font-size: 0.85rem; }
+    .dark-mode { background-color: #121212; color: #f0f0f0; }
+    .dark-mode .card { background: #1e1e1e; border-color: #444; }
+    .dark-mode h1, .dark-mode .sensor-label { color: #f0f0f0; }
+    .dark-mode h2 { color: #aaa; }
+    .dark-mode li { color: #f0f0f0; }
+    .dark-mode .alert { background-color: #3a1e1e; color: #ffcccc; }
+    .dark-mode .sensor-legend { color: #aaa; }
+    .active-profile { background-color: #28a745 !important; color: white !important; border: 2px solid #1e7e34 !important; }
+    .load-bar-wrap { margin-top: 6px; }
+    .load-bar-header { font-size: 0.85rem; display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .bar-container { position: relative; height: 10px; background: #ddd; border-radius: 4px; overflow: visible; }
+    .bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+    .bar-marker { position: absolute; top: -3px; width: 3px; height: 16px; border-radius: 2px; transform: translateX(-50%); }
+    .bar-marker.m5 { background: #1565C0; }
+    .bar-marker.m15 { background: #E53935; }
+    .load-legend { display: flex; gap: 10px; margin-top: 4px; font-size: 0.7rem; color: #888; }
+    .load-legend span { display: flex; align-items: center; gap: 3px; }
+    .load-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+    .dark-mode .bar-container { background: #444; }
+    .dark-mode .load-legend { color: #aaa; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>TrueFan Dashboard <button onclick="toggleDarkMode()" style="float: right;">🌓</button></h1>
-
-    <div class="section">
-      <h2>Status</h2>
-      <p><strong>Active Profile:</strong> <span id="profile">Loading...</span></p>
-      <p><strong>Uptime:</strong> <span id="uptime">Loading...</span></p>
-      <p><strong>CPU Load:</strong> <span id="cpuLoad">Loading...</span></p>
+    <div class="header">
+      <h1>TrueFan Dashboard</h1>
+      <div class="header-buttons">
+        <button class="neutral" onclick="toggleDarkMode()">🌓</button>
+        <button class="neutral" onclick="exportCSV()">Download CSV</button>
+        <button class="neutral" onclick="sendStatusEmail()">📧 Send Status</button>
+      </div>
     </div>
 
-    <div class="section">
-      <h2>Fan Profiles</h2>
-      <ul>
-        <li><button id="btn-silent" class="button" onclick="setProfile('silent')">Silent</button></li>
-        <li><button id="btn-cool" class="button" onclick="setProfile('cool')">Cool</button></li>
-        <li><button id="btn-aggressive" class="button" onclick="setProfile('aggressive')">Aggressive</button></li>
-      </ul>
+    <div class="top-row">
+      <div class="card">
+        <h2>Status</h2>
+        <p><strong>Uptime:</strong> <span id="uptime">Loading...</span></p>
+        <div class="load-bar-wrap">
+          <div class="load-bar-header">
+            <strong>CPU Load</strong>
+            <span id="loadPct" style="font-weight:bold;">-</span>
+          </div>
+          <div class="bar-container">
+            <div class="bar-fill" id="loadFill" style="width:0%; background:#28a745;"></div>
+            <div class="bar-marker m5" id="loadMarker5" style="left:0%;"></div>
+            <div class="bar-marker m15" id="loadMarker15" style="left:0%;"></div>
+          </div>
+          <div class="load-legend">
+            <span><span class="load-dot" style="background:#28a745;"></span>Now</span>
+            <span><span class="load-dot" style="background:#1565C0;"></span>5 min.</span>
+            <span><span class="load-dot" style="background:#E53935;"></span>15 min.</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Fan Profiles</h2>
+        <p style="font-size:0.8rem; margin: 0 0 0.4rem;"><strong>Active:</strong> <span id="profile">Loading...</span></p>
+        <div class="profile-btns">
+          <button id="btn-silent" class="button" onclick="setProfile('silent')">Silent</button>
+          <button id="btn-balanced" class="button" onclick="setProfile('balanced')">Balanced</button>
+          <button id="btn-performance" class="button" onclick="setProfile('performance')">Performance</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>PWM Manual Control</h2>
+        <div class="pwm-row">
+          <input type="range" min="0" max="255" value="128" class="slider" id="pwmSlider">
+          <span id="pwmValue">128</span>
+          <button onclick="applyPWM()">Apply</button>
+          <button id="btn-auto" class="neutral" onclick="setAuto()" title="Return fan to hardware auto control">Auto</button>
+        </div>
+      </div>
     </div>
 
-    <div class="section">
-      <h2>PWM Manual Control</h2>
-      <input type="range" min="0" max="255" value="128" class="slider" id="pwmSlider">
-      <span id="pwmValue">128</span>
-      <button onclick="applyPWM()">Apply PWM</button>
-    </div>
-
-    <div class="section">
-      <h2>Fan Speeds</h2>
-      <ul id="fanList"><li>Loading...</li></ul>
+    <div class="sensor-row">
+      <div>
+        <div class="sensor-label">Fan Speeds</div>
+        <ul id="fanList"><li>Loading...</li></ul>
+        <div class="sensor-legends">
+          <div class="sensor-legend"><span class="legend-line" style="background:#1565C0;"></span>Fan RPM</div>
+        </div>
+      </div>
       <canvas id="fanChart"></canvas>
     </div>
 
-    <div class="section">
-      <h2>Temperatures</h2>
-      <ul id="tempList"><li>Loading...</li></ul>
+    <div class="sensor-row">
+      <div>
+        <div class="sensor-label">Temperatures</div>
+        <ul id="tempList"><li>Loading...</li></ul>
+        <div class="sensor-legends">
+          <div class="sensor-legend"><span class="legend-line" style="background:#E53935;"></span>CPU</div>
+          <div class="sensor-legend"><span class="legend-line" style="background:#FB8C00;"></span>HDD avg.</div>
+          <div class="sensor-legend"><span class="legend-line" style="background:#43A047;"></span>NVMe avg.</div>
+        </div>
+      </div>
       <canvas id="tempChart"></canvas>
     </div>
 
-    <div class="section">
-      <h2>Export Data</h2>
-      <button onclick="exportCSV()">Download CSV</button>
-    </div>
-
-    <div class="section">
-      <h2>Container Management</h2>
-      <button class="danger" onclick="confirmRestart()">Restart Container</button>
-      <button class="danger" onclick="confirmShutdown()">Shutdown Container</button>
-    </div>
-
-    <div class="section">
-      <div id="alertBox" class="hidden"></div>
-    </div>
+    <div id="alertBox" class="hidden"></div>
   </div>
 
   <script>
-    let tempHistory = [], fanHistory = [], maxDataPoints = 20;
-    let tempChart, fanChart;
+    const MAX_DISPLAY = 20;
+    const MAX_HISTORY = 120;
+    let fanHistory = [], cpuHistory = [], hddHistory = [], nvmeHistory = [];
+    let zeroRPMCount = 0;
 
     function toggleDarkMode() {
       document.body.classList.toggle("dark-mode");
       localStorage.setItem("theme", document.body.classList.contains("dark-mode") ? "dark" : "light");
     }
-
     function applyStoredTheme() {
-      const saved = localStorage.getItem("theme");
-      if (saved === "dark") document.body.classList.add("dark-mode");
+      if (localStorage.getItem("theme") === "dark") document.body.classList.add("dark-mode");
     }
     applyStoredTheme();
 
-    function highlightProfile(profile) {
-      ["silent", "cool", "aggressive"].forEach(p => {
-        const btn = document.getElementById(`btn-${p}`);
-        if (btn) btn.classList.remove("active-profile");
+    function clearAllActive() {
+      ["silent", "balanced", "performance", "auto"].forEach(p => {
+        document.getElementById(`btn-${p}`)?.classList.remove("active-profile");
       });
-      const activeBtn = document.getElementById(`btn-${profile}`);
-      if (activeBtn) activeBtn.classList.add("active-profile");
+    }
+
+    function highlightProfile(profile) {
+      clearAllActive();
+      document.getElementById(`btn-${profile}`)?.classList.add("active-profile");
     }
 
     function setProfile(profile) {
@@ -156,7 +175,28 @@
           highlightProfile(d.profile.trim());
           showAlert(`Profile set to ${d.profile}`);
         })
-        .catch(err => showAlert("Error setting profile: " + err.message));
+        .catch(err => showAlert("Error: " + err.message));
+    }
+
+    function setAuto() {
+      fetch('/auto', { method: "POST" })
+        .then(() => {
+          document.getElementById("profile").textContent = "Hardware Auto";
+          clearAllActive();
+          document.getElementById("btn-auto")?.classList.add("active-profile");
+          showAlert("Fan returned to hardware automatic control");
+        })
+        .catch(err => showAlert("Error: " + err.message));
+    }
+
+    function applyPWM() {
+      const val = document.getElementById("pwmSlider").value;
+      fetch(`/pwm/${val}`, { method: "POST" })
+        .then(() => {
+          document.getElementById("profile").textContent = "PWM Manual";
+          clearAllActive();
+          showAlert(`PWM set to ${val}`);
+        });
     }
 
     window.onload = () => {
@@ -165,14 +205,34 @@
 
       tempChart = new Chart(tempCtx, {
         type: 'line',
-        data: { labels: [], datasets: [{ label: 'Temperature (°C)', data: [], borderColor: 'orange', fill: false }] },
-        options: { scales: { y: { beginAtZero: false } } }
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'CPU', data: [], borderColor: '#E53935', backgroundColor: 'transparent', tension: 0.3, pointRadius: 0 },
+            { label: 'HDD avg', data: [], borderColor: '#FB8C00', backgroundColor: 'transparent', tension: 0.3, pointRadius: 0 },
+            { label: 'NVMe avg', data: [], borderColor: '#43A047', backgroundColor: 'transparent', tension: 0.3, pointRadius: 0 },
+          ]
+        },
+        options: {
+          aspectRatio: 4,
+          animation: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: false }, x: { ticks: { maxTicksLimit: 20 } } }
+        }
       });
 
       fanChart = new Chart(fanCtx, {
         type: 'line',
-        data: { labels: [], datasets: [{ label: 'Fan RPM', data: [], borderColor: 'blue', fill: false }] },
-        options: { scales: { y: { beginAtZero: true } } }
+        data: {
+          labels: [],
+          datasets: [{ label: 'Fan RPM', data: [], borderColor: '#1565C0', backgroundColor: 'transparent', tension: 0.3, pointRadius: 0 }]
+        },
+        options: {
+          aspectRatio: 4,
+          animation: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true }, x: { ticks: { maxTicksLimit: 20 } } }
+        }
       });
 
       document.getElementById('pwmSlider').addEventListener('input', function() {
@@ -185,6 +245,20 @@
       updateStatus();
     };
 
+    function avg(arr) {
+      if (!arr.length) return null;
+      return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 10) / 10;
+    }
+
+    function pushHistory(arr, point) {
+      arr.push(point);
+      if (arr.length > MAX_HISTORY) arr.shift();
+    }
+
+    function lastN(arr) {
+      return arr.slice(-MAX_DISPLAY);
+    }
+
     async function updateSensors() {
       try {
         const res = await fetch('/sensors');
@@ -193,45 +267,61 @@
 
         const fanList = document.getElementById('fanList');
         fanList.innerHTML = '';
-        let fanRPMs = [];
-
+        let maxRPM = 0;
         for (const [fan, rpmText] of Object.entries(data.fans || {})) {
           const rpm = parseInt(rpmText.replace(/\D/g, ''), 10) || 0;
-          if (!isNaN(rpm)) fanRPMs.push(rpm);
+          if (rpm > maxRPM) maxRPM = rpm;
           const li = document.createElement('li');
           li.textContent = `${fan}: ${rpmText}`;
           fanList.appendChild(li);
         }
+        // Filter zero spikes: only show 0 after 3 consecutive zero readings
+        const lastFan = fanHistory.length ? fanHistory[fanHistory.length - 1].y : 0;
+        if (maxRPM === 0 && lastFan > 0) {
+          zeroRPMCount++;
+          if (zeroRPMCount < 3) maxRPM = lastFan;
+        } else {
+          zeroRPMCount = 0;
+        }
 
         const tempList = document.getElementById('tempList');
         tempList.innerHTML = '';
-        let temps = [];
+        const temps = data.temps || {};
+        let cpuVal = null, hddVals = [], nvmeVals = [];
+        const ORDER = ["CPU", "Motherboard", "HDD 1", "HDD 2", "HDD 3", "HDD 4", "NVMe 1", "NVMe 2"];
 
-        for (const [label, temp] of Object.entries(data.temps || {})) {
-          const val = parseFloat(temp.replace("°C", ""));
-          if (!isNaN(val)) temps.push(val);
-          if (val >= 80) showAlert(`${label} temperature high: ${val}°C`);
+        for (const label of ORDER) {
+          if (!(label in temps)) continue;
+          const val = parseFloat(temps[label]);
+          if (label === "CPU") cpuVal = val;
+          if (label.startsWith("HDD")) hddVals.push(val);
+          if (label.startsWith("NVMe")) nvmeVals.push(val);
+          if (!isNaN(val) && val >= 50) showAlert(`${label} high: ${temps[label]}`);
           const li = document.createElement('li');
-          li.textContent = `${label}: ${temp}`;
+          li.textContent = `${label}: ${temps[label]}`;
           tempList.appendChild(li);
         }
 
         const now = new Date().toLocaleTimeString();
-        const avgTemp = temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : 0;
-        const maxFanRPM = fanRPMs.length ? Math.max(...fanRPMs) : 0;
+        pushHistory(fanHistory, { t: now, y: maxRPM });
+        if (cpuVal !== null) pushHistory(cpuHistory, { t: now, y: cpuVal });
+        const hddAvg = avg(hddVals);
+        if (hddAvg !== null) pushHistory(hddHistory, { t: now, y: hddAvg });
+        const nvmeAvg = avg(nvmeVals);
+        if (nvmeAvg !== null) pushHistory(nvmeHistory, { t: now, y: nvmeAvg });
 
-        tempHistory.push({ t: now, y: avgTemp });
-        fanHistory.push({ t: now, y: maxFanRPM });
-
-        if (tempHistory.length > maxDataPoints) tempHistory.shift();
-        if (fanHistory.length > maxDataPoints) fanHistory.shift();
-
-        tempChart.data.labels = tempHistory.map(p => p.t);
-        tempChart.data.datasets[0].data = tempHistory.map(p => p.y);
-        fanChart.data.labels = fanHistory.map(p => p.t);
-        fanChart.data.datasets[0].data = fanHistory.map(p => p.y);
-        tempChart.update();
+        const displayFan = lastN(fanHistory);
+        fanChart.data.labels = displayFan.map(p => p.t);
+        fanChart.data.datasets[0].data = displayFan.map(p => p.y);
         fanChart.update();
+
+        const displayCpu = lastN(cpuHistory);
+        tempChart.data.labels = displayCpu.map(p => p.t);
+        tempChart.data.datasets[0].data = displayCpu.map(p => p.y);
+        tempChart.data.datasets[1].data = lastN(hddHistory).map(p => p.y);
+        tempChart.data.datasets[2].data = lastN(nvmeHistory).map(p => p.y);
+        tempChart.update();
+
       } catch (err) {
         showAlert("Sensor update failed: " + err.message);
       }
@@ -245,52 +335,61 @@
       setTimeout(() => { alertBox.style.display = 'none'; }, 5000);
     }
 
-    function applyPWM() {
-      const val = document.getElementById("pwmSlider").value;
-      fetch(`/pwm/${val}`, { method: "POST" });
-      showAlert(`PWM set to ${val}`);
+    function sendStatusEmail() {
+      fetch('/send-status', { method: "POST" })
+        .then(r => r.json())
+        .then(() => showAlert("Status email sent."))
+        .catch(err => showAlert("Error sending email: " + err.message));
     }
 
     function exportCSV() {
-      const rows = ["Time,Temperature,FanRPM"];
-      for (let i = 0; i < tempHistory.length; i++) {
-        rows.push(`${tempHistory[i].t},${tempHistory[i].y},${fanHistory[i]?.y ?? ''}`);
+      const rows = ["Time;CPU (C);HDD avg (C);NVMe avg (C);Fan RPM"];
+      const len = Math.max(cpuHistory.length, fanHistory.length);
+      for (let i = 0; i < len; i++) {
+        const t = (cpuHistory[i] || fanHistory[i] || {}).t || '';
+        const cpu = cpuHistory[i] ? cpuHistory[i].y : '';
+        const hdd = hddHistory[i] ? hddHistory[i].y : '';
+        const nvme = nvmeHistory[i] ? nvmeHistory[i].y : '';
+        const rpm = fanHistory[i] ? fanHistory[i].y : '';
+        rows.push(`${t};${cpu};${hdd};${nvme};${rpm}`);
       }
-      const blob = new Blob([rows.join("\n")], { type: 'text/csv' });
+      const blob = new Blob(["\uFEFF" + rows.join("\n")], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = "truefan_data.csv";
       a.click();
-    }
-
-    function confirmRestart() {
-      if (confirm("Restart the fan control container?")) {
-        fetch("/restart-container", { method: "POST" });
-        showAlert("Container restart requested...");
-      }
-    }
-
-    function confirmShutdown() {
-      if (confirm("Shutdown the fan control container?")) {
-        fetch("/shutdown-container", { method: "POST" });
-        showAlert("Shutdown requested...");
-      }
+      URL.revokeObjectURL(url);
     }
 
     function updateStatus() {
       fetch('/status')
         .then(res => res.json())
         .then(data => {
-          document.getElementById('profile').textContent = data.profile;
+          const p = data.profile;
+          if (p === 'manual') {
+            document.getElementById('profile').textContent = 'PWM Manual';
+            clearAllActive();
+          } else {
+            document.getElementById('profile').textContent = p;
+            highlightProfile(p.trim());
+          }
           document.getElementById('uptime').textContent = data.uptime;
-          document.getElementById('cpuLoad').textContent =
-            `${data.load['1min']} / ${data.load['5min']} / ${data.load['15min']}`;
-          highlightProfile(data.profile.trim());
+
+          const cores = 4;
+          const pct1  = Math.min(100, Math.round(data.load['1min']  / cores * 100));
+          const pct5  = Math.min(100, Math.round(data.load['5min']  / cores * 100));
+          const pct15 = Math.min(100, Math.round(data.load['15min'] / cores * 100));
+
+          const color = pct1 >= 80 ? '#E53935' : pct1 >= 50 ? '#FB8C00' : '#28a745';
+          document.getElementById('loadPct').textContent = pct1 + '%';
+          document.getElementById('loadPct').style.color = color;
+          document.getElementById('loadFill').style.width = pct1 + '%';
+          document.getElementById('loadFill').style.background = color;
+          document.getElementById('loadMarker5').style.left = pct5 + '%';
+          document.getElementById('loadMarker15').style.left = pct15 + '%';
         })
-        .catch(err => {
-          showAlert("Failed to fetch status: " + err.message);
-        });
+        .catch(err => showAlert("Failed to fetch status: " + err.message));
     }
   </script>
 </body>

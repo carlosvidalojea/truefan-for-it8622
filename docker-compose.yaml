@@ -1,17 +1,44 @@
+# TrueFan — Fan Control Dashboard for TrueNAS
+# Fork: https://github.com/carlosvidalojea/truefan-for-it8622
+#
+# Prerequisites — run once on the TrueNAS host:
+#   1. Copy app/mail_webhook.py to your NAS storage, e.g.:
+#      cp app/mail_webhook.py /mnt/nas/apps/truefan/mail_webhook.py
+#
+#   2. Add to System > Advanced > Init/Shutdown Scripts (Post Init):
+#      - Command: modprobe it87 force_id=0x8622
+#      - Command: nohup python3 /mnt/nas/apps/truefan/mail_webhook.py &
+
 services:
   truefan:
-    build:
-      context: .
-      dockerfile: Dockerfile
     container_name: truefan
-    restart: unless-stopped
+
+    # Build the image locally from the Dockerfile
+    build: .
+
+    ports:
+      - '5002:5002'             # Web dashboard — access at http://<NAS_IP>:5002
+
+    environment:
+      - TZ=Europe/Madrid        # Set to your local timezone
+
+    # Required for direct sysfs PWM access and sensor reading
     privileged: true
+
+    restart: unless-stopped
+
     volumes:
+      # Hardware access — required for fan control and sensor reading
       - /sys:/sys
       - /dev:/dev
+
+      # lm-sensors configuration — read-only
       - /etc/sensors3.conf:/etc/sensors3.conf:ro
-    working_dir: /app
-    ports:
-      - "5002:5002"
-    environment:
-      - TZ=America/Chicago
+
+# TrueNAS web portal integration
+x-portals:
+  - host: 0.0.0.0
+    name: Web UI
+    path: /
+    port: 5002
+    scheme: http

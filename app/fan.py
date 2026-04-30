@@ -1,228 +1,262 @@
 import os
-import json
+import re
 import subprocess
 from datetime import datetime
 
-HWMON_PATH = "/sys/class/hwmon/hwmon4"
-PROFILE_FILE = "fan_profile.conf"
-LOG_FILE = "logs/fan.log"
-PWM_HEADERS = [1, 2, 3, 4]
+HWMON_PATH = "/sys/class/hwmon/hwmon8"
+PROFILE_FILE = "/app/fan_profile.conf"
+LOG_FILE = "/app/logs/fan.log"
+PWM_CHANNEL = 3
 
-def read_temp_cpu():
+TEMP_EMERGENCY = 55
+PWM_MIN = 50
+PWM_MAX = 250
+
+ALERT_THRESHOLDS = {
+    "CPU":  80,
+    "HDD":  50,
+    "NVMe": 65,
+}
+ALERT_HYSTERESIS = 5  # degrees below threshold to confirm recovery
+# Tracks which sensors are currently in alert state to avoid repeated emails
+_alert_active = set()
+
+
+MAIL_WEBHOOK = "http://192.168.0.157:5003/send"
+
+
+def send_alert(subject, text):
     try:
-        out = subprocess.check_output(["sensors"], encoding="utf-8")
-        for line in out.splitlines():
-            if "Package id 0" in line:
-                return int(float(line.split()[3].replace("+", "").replace("°C", "")))
-    except:
-        return 0
+        import urllib.request
+        import json as _json
+        data = _json.dumps({"subject": subject, "text": text}).encode()
+        req = urllib.request.Request(MAIL_WEBHOOK, data=data, headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5)
+        print(f"Alert sent: {subject}", flush=True)
+    except Exception as e:
+        print(f"Alert error: {e}", flush=True)
 
-def read_temp_nvme():
+
+def check_temp_alerts(temps):
+    global _alert_active
+    triggered = {}
+    recovered = set()
+
+    for label, val in temps.items():
+        category = "CPU" if label == "CPU" else "HDD" if label.startswith("HDD") else "NVMe" if label.startswith("NVMe") else None
+        if category is None:
+            continue
+        threshold = ALERT_THRESHOLDS[category]
+        if val >= threshold:
+            triggered[label] = (val, threshold)
+        elif label in _alert_active and val <= threshold - ALERT_HYSTERESIS:
+            recovered.add(label)
+
+    # Send alert for newly triggered sensors
+    new_alerts = {k: v for k, v in triggered.items() if k not in _alert_active}
+    if new_alerts:
+        lines = [f"  {label}: {val}°C (threshold: {thr}°C)" for label, (val, thr) in new_alerts.items()]
+        send_alert(
+            f"TrueFan: High temperature alert",
+            f"The following sensors have exceeded their temperature threshold:\n\n" + "\n".join(lines)
+        )
+        _alert_active.update(new_alerts.keys())
+
+    # Send recovery notice for sensors that came back down
+    if recovered:
+        lines = [f"  {label}: {temps[label]:.0f}°C" for label in recovered]
+        send_alert(
+            f"TrueFan: Temperature back to normal",
+            f"The following sensors are back below their threshold:\n\n" + "\n".join(lines)
+        )
+        _alert_active -= recovered
+
+
+def parse_temp(s):
+    m = re.search(r'([+-]?\d+(?:\.\d+)?)\s*°?\s*C', s)
+    if m:
+        return float(m.group(1))
+    return None
+
+
+def read_sensors_output():
     try:
-        out = subprocess.check_output(["smartctl", "-A", "/dev/nvme0"], encoding="utf-8")
-        for line in out.splitlines():
-            if "Temperature:" in line:
-                return int(line.split()[1])
+        return subprocess.check_output(["sensors"], encoding="utf-8", stderr=subprocess.DEVNULL)
     except:
-        return 0
+        return ""
 
-def read_temp_hdd():
-    try:
-        out = subprocess.check_output(["smartctl", "-A", "/dev/sda"], encoding="utf-8")
-        for line in out.splitlines():
-            if "Temperature_Celsius" in line or "Temperature_Case" in line:
-                return int(line.split()[-1])
-            if "194 Temperature" in line:
-                return int(line.split()[-1])
-    except:
-        return 0
 
-def load_profile():
-    if not os.path.exists(PROFILE_FILE):
-        return "cool"
-    with open(PROFILE_FILE) as f:
-        for line in f:
-            if line.startswith("profile="):
-                return line.strip().split("=")[1]
-    return "cool"
+def parse_all_sensors(output):
+    temps = {}
+    fans = {}
+    hdd_scsi = {}
+    nvme_list = []
+    nvme_index = 0
+    current_adapter = None
 
-def determine_pwm(cpu_temp, profile):
-    if profile == "quiet":
-        if cpu_temp >= 80: return 180
-        elif cpu_temp >= 65: return 120
-        else: return 70
-    elif profile == "cool":
-        if cpu_temp >= 70: return 255
-        elif cpu_temp >= 55: return 180
-        else: return 100
-    elif profile == "aggressive":
-        if cpu_temp >= 50: return 255
-        elif cpu_temp >= 40: return 180
-        else: return 130
-    return 120
-
-def set_pwm(pwm):
-    for i in PWM_HEADERS:
-        try:
-            with open(f"{HWMON_PATH}/pwm{i}_enable", "w") as f:
-                f.write("1")
-            with open(f"{HWMON_PATH}/pwm{i}", "w") as f:
-                f.write(str(pwm))
-        except:
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
             continue
 
-def log_status(cpu, nvme, hdd, pwm, profile):
-    os.makedirs("logs", exist_ok=True)
-    with open(LOG_FILE, "a") as log:
-        log.write(f"{datetime.now()} - Profile: {profile} | CPU: {cpu}°C | NVMe: {nvme}°C | HDD: {hdd}°C → PWM: {pwm}\n")
+        if ':' not in stripped and stripped.count('-') >= 2 and stripped[0].isalpha():
+            if stripped.startswith('it8622'):
+                current_adapter = 'it8622'
+            elif stripped.startswith('coretemp'):
+                current_adapter = 'coretemp'
+            elif stripped.startswith('drivetemp'):
+                m = re.search(r'scsi-(\d+)', stripped)
+                current_adapter = ('drivetemp', int(m.group(1)) if m else 99)
+            elif stripped.startswith('nvme-pci'):
+                current_adapter = ('nvme', nvme_index)
+                nvme_index += 1
+            else:
+                current_adapter = None
+            continue
 
-def set_profile(name):
-    with open(PROFILE_FILE, "w") as f:
-        f.write(f"profile={name}\n")
-    print(f"Profile set to: {name}")
+        if stripped.startswith('Adapter:'):
+            continue
 
-def get_profile():
-    print(f"Active profile: {load_profile()}")
+        if current_adapter == 'coretemp':
+            if stripped.startswith('Package id 0'):
+                t = parse_temp(line.split(':', 1)[1] if ':' in line else line)
+                if t is not None:
+                    temps['CPU'] = t
 
-def control():
-    profile = load_profile()
-    cpu_temp = read_temp_cpu()
-    nvme_temp = read_temp_nvme()
-    hdd_temp = read_temp_hdd()
-    pwm = determine_pwm(cpu_temp, profile)
-    set_pwm(pwm)
-    log_status(cpu_temp, nvme_temp, hdd_temp, pwm, profile)
-    print(f"Applied profile '{profile}' → PWM: {pwm}")
+        elif current_adapter == 'it8622':
+            if stripped.startswith('temp3'):
+                t = parse_temp(line.split(':', 1)[1] if ':' in line else line)
+                if t is not None:
+                    temps['Motherboard'] = t
+            m = re.match(r'(fan\d+):\s+(\d+)\s+RPM', stripped)
+            if m:
+                rpm = int(m.group(2))
+                if rpm > 0:
+                    fans[m.group(1)] = f"{rpm} RPM"
 
-def status():
-    cpu = read_temp_cpu()
-    nvme = read_temp_nvme()
-    hdd = read_temp_hdd()
-    print(f"CPU Temp: {cpu}°C | NVMe Temp: {nvme}°C | HDD Temp: {hdd}°C")
+        elif isinstance(current_adapter, tuple) and current_adapter[0] == 'drivetemp':
+            if stripped.startswith('temp1'):
+                t = parse_temp(line.split(':', 1)[1] if ':' in line else line)
+                if t is not None:
+                    hdd_scsi[current_adapter[1]] = t
 
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: fan.py [status|control|set-profile <name>|get-profile]")
-        exit(1)
+        elif isinstance(current_adapter, tuple) and current_adapter[0] == 'nvme':
+            if stripped.startswith('Composite'):
+                t = parse_temp(line.split(':', 1)[1] if ':' in line else line)
+                if t is not None:
+                    nvme_list.append((current_adapter[1], t))
 
-    cmd = sys.argv[1]
-    if cmd == "status":
-        status()
-    elif cmd == "control":
-        control()
-    elif cmd == "set-profile" and len(sys.argv) == 3:
-        set_profile(sys.argv[2])
-    elif cmd == "get-profile":
-        get_profile()
+    for hdd_num, scsi_idx in enumerate(sorted(hdd_scsi.keys()), 1):
+        temps[f'HDD {hdd_num}'] = hdd_scsi[scsi_idx]
+
+    for nvme_num, (_, t) in enumerate(sorted(nvme_list, key=lambda x: x[0]), 1):
+        temps[f'NVMe {nvme_num}'] = t
+
+    return temps, fans
+
+
+def format_temp(t):
+    return f"{t:.0f}°C"
+
+
+def calculate_pwm(profile_name, cpu_temp, hdd_avg):
+    if profile_name == "silent":
+        pwm_cpu = 3 * cpu_temp - 51
+    elif profile_name == "balanced":
+        pwm_cpu = 2 * cpu_temp + 48
+    elif profile_name == "performance":
+        pwm_cpu = cpu_temp + 152
     else:
-        print("Unknown command.")
-import os
-import json
-import subprocess
-from datetime import datetime
+        pwm_cpu = 2 * cpu_temp + 48
 
-HWMON_PATH = "/sys/class/hwmon/hwmon4"
-PROFILE_FILE = "fan_profile.conf"
-LOG_FILE = "logs/fan.log"
-PWM_HEADERS = [1, 2, 3, 4]
+    pwm_hdd = 6 * hdd_avg - 104 if hdd_avg is not None else 0
 
-def read_temp_cpu():
-    try:
-        out = subprocess.check_output(["sensors"], encoding="utf-8")
-        for line in out.splitlines():
-            if "Package id 0" in line:
-                return int(float(line.split()[3].replace("+", "").replace("°C", "")))
-    except:
-        return 0
+    pwm = max(pwm_cpu, pwm_hdd)
+    pwm = max(PWM_MIN, min(PWM_MAX, int(pwm)))
+    return pwm
 
-def read_temp_nvme():
-    try:
-        out = subprocess.check_output(["smartctl", "-A", "/dev/nvme0"], encoding="utf-8")
-        for line in out.splitlines():
-            if "Temperature:" in line:
-                return int(line.split()[1])
-    except:
-        return 0
-
-def read_temp_hdd():
-    try:
-        out = subprocess.check_output(["smartctl", "-A", "/dev/sda"], encoding="utf-8")
-        for line in out.splitlines():
-            if "Temperature_Celsius" in line or "Temperature_Case" in line:
-                return int(line.split()[-1])
-            if "194 Temperature" in line:
-                return int(line.split()[-1])
-    except:
-        return 0
 
 def load_profile():
     if not os.path.exists(PROFILE_FILE):
-        return "cool"
+        return "balanced"
     with open(PROFILE_FILE) as f:
         for line in f:
             if line.startswith("profile="):
                 return line.strip().split("=")[1]
-    return "cool"
+    return "balanced"
 
-def determine_pwm(cpu_temp, profile):
-    if profile == "quiet":
-        if cpu_temp >= 80: return 180
-        elif cpu_temp >= 65: return 120
-        else: return 70
-    elif profile == "cool":
-        if cpu_temp >= 70: return 255
-        elif cpu_temp >= 55: return 180
-        else: return 100
-    elif profile == "aggressive":
-        if cpu_temp >= 50: return 255
-        elif cpu_temp >= 40: return 180
-        else: return 130
-    return 120
 
-def set_pwm(pwm):
-    for i in PWM_HEADERS:
-        try:
-            with open(f"{HWMON_PATH}/pwm{i}_enable", "w") as f:
-                f.write("1")
-            with open(f"{HWMON_PATH}/pwm{i}", "w") as f:
-                f.write(str(pwm))
-        except:
-            continue
+def read_current_pwm():
+    try:
+        with open(f"{HWMON_PATH}/pwm{PWM_CHANNEL}", "r") as f:
+            return int(f.read().strip())
+    except:
+        return 125
 
-def log_status(cpu, nvme, hdd, pwm, profile):
-    os.makedirs("logs", exist_ok=True)
+
+def set_pwm_value(pwm):
+    pwm = max(0, min(255, int(pwm)))
+    try:
+        with open(f"{HWMON_PATH}/pwm{PWM_CHANNEL}_enable", "w") as f:
+            f.write("1")
+        with open(f"{HWMON_PATH}/pwm{PWM_CHANNEL}", "w") as f:
+            f.write(str(pwm))
+    except Exception as e:
+        print(f"Error setting PWM: {e}")
+
+
+def log_status(cpu, hdd_avg, pwm, profile):
+    os.makedirs("/app/logs", exist_ok=True)
     with open(LOG_FILE, "a") as log:
-        log.write(f"{datetime.now()} - Profile: {profile} | CPU: {cpu}°C | NVMe: {nvme}°C | HDD: {hdd}°C → PWM: {pwm}\n")
+        log.write(f"{datetime.now()} - Profile: {profile} | CPU:{cpu}°C HDD_avg:{hdd_avg}°C | PWM:{pwm}\n")
+
 
 def set_profile(name):
     with open(PROFILE_FILE, "w") as f:
         f.write(f"profile={name}\n")
     print(f"Profile set to: {name}")
 
+
 def get_profile():
     print(f"Active profile: {load_profile()}")
 
+
 def control():
-    profile = load_profile()
-    cpu_temp = read_temp_cpu()
-    nvme_temp = read_temp_nvme()
-    hdd_temp = read_temp_hdd()
-    pwm = determine_pwm(cpu_temp, profile)
-    set_pwm(pwm)
-    log_status(cpu_temp, nvme_temp, hdd_temp, pwm, profile)
-    print(f"Applied profile '{profile}' → PWM: {pwm}")
+    profile_name = load_profile()
+    if profile_name == "manual":
+        return
+
+    output = read_sensors_output()
+    temps, _ = parse_all_sensors(output)
+
+    cpu = temps.get("CPU", 0)
+    hdds = [v for k, v in temps.items() if k.startswith("HDD")]
+    hdd_avg = round(sum(hdds) / len(hdds), 1) if hdds else None
+
+    if cpu >= TEMP_EMERGENCY:
+        new_pwm = 255
+    else:
+        new_pwm = calculate_pwm(profile_name, cpu, hdd_avg)
+
+    set_pwm_value(new_pwm)
+    log_status(cpu, hdd_avg, new_pwm, profile_name)
+    print(f"Profile '{profile_name}' | CPU:{cpu}°C HDD_avg:{hdd_avg}°C | PWM:{new_pwm}")
+    check_temp_alerts(temps)
+
 
 def status():
-    cpu = read_temp_cpu()
-    nvme = read_temp_nvme()
-    hdd = read_temp_hdd()
-    print(f"CPU Temp: {cpu}°C | NVMe Temp: {nvme}°C | HDD Temp: {hdd}°C")
+    output = read_sensors_output()
+    temps, _ = parse_all_sensors(output)
+    ORDER = ["CPU", "Motherboard", "HDD 1", "HDD 2", "HDD 3", "HDD 4", "NVMe 1", "NVMe 2"]
+    for key in ORDER:
+        if key in temps:
+            print(f"{key}: {format_temp(temps[key])}")
+
 
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("Usage: fan.py [status|control|set-profile <name>|get-profile]")
+        print("Usage: fan.py [status|control|set-profile <name>|get-profile|set <pwm>]")
         exit(1)
 
     cmd = sys.argv[1]
@@ -234,5 +268,7 @@ if __name__ == "__main__":
         set_profile(sys.argv[2])
     elif cmd == "get-profile":
         get_profile()
+    elif cmd == "set" and len(sys.argv) == 3:
+        set_pwm_value(int(sys.argv[2]))
     else:
         print("Unknown command.")
