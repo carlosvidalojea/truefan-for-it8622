@@ -8,21 +8,34 @@ PROFILE_FILE = "/app/fan_profile.conf"
 LOG_FILE = "/app/logs/fan.log"
 PWM_CHANNEL = 3
 
-TEMP_EMERGENCY = 55
 PWM_MIN = 50
 PWM_MAX = 250
 
+# Emergency thresholds — absolute priority, any breach → PWM 255
+EMERGENCY_CPU  = 80   # °C
+EMERGENCY_HDD  = 55   # °C — permanent damage risk above this
+EMERGENCY_NVME = 70   # °C
+
+# Email alert thresholds (early warning, below emergency)
 ALERT_THRESHOLDS = {
     "CPU":  80,
     "HDD":  50,
     "NVMe": 65,
 }
-ALERT_HYSTERESIS = 5  # degrees below threshold to confirm recovery
-# Tracks which sensors are currently in alert state to avoid repeated emails
+ALERT_HYSTERESIS = 5
 _alert_active = set()
 
 
-MAIL_WEBHOOK = "http://192.168.0.157:5003/send"
+def _get_host_ip():
+    """Get the Docker host IP from the default gateway — works inside any Docker container."""
+    try:
+        import subprocess as _sp
+        out = _sp.check_output(["ip", "route", "show", "default"], encoding="utf-8")
+        return out.split()[2]
+    except Exception:
+        return "127.0.0.1"
+
+MAIL_WEBHOOK = f"http://{_get_host_ip()}:5003/send"
 
 
 def send_alert(subject, text):
@@ -52,22 +65,20 @@ def check_temp_alerts(temps):
         elif label in _alert_active and val <= threshold - ALERT_HYSTERESIS:
             recovered.add(label)
 
-    # Send alert for newly triggered sensors
     new_alerts = {k: v for k, v in triggered.items() if k not in _alert_active}
     if new_alerts:
         lines = [f"  {label}: {val}°C (threshold: {thr}°C)" for label, (val, thr) in new_alerts.items()]
         send_alert(
-            f"TrueFan: High temperature alert",
-            f"The following sensors have exceeded their temperature threshold:\n\n" + "\n".join(lines)
+            "TrueFan: High temperature alert",
+            "The following sensors have exceeded their temperature threshold:\n\n" + "\n".join(lines)
         )
         _alert_active.update(new_alerts.keys())
 
-    # Send recovery notice for sensors that came back down
     if recovered:
         lines = [f"  {label}: {temps[label]:.0f}°C" for label in recovered]
         send_alert(
-            f"TrueFan: Temperature back to normal",
-            f"The following sensors are back below their threshold:\n\n" + "\n".join(lines)
+            "TrueFan: Temperature back to normal",
+            "The following sensors are back below their threshold:\n\n" + "\n".join(lines)
         )
         _alert_active -= recovered
 
@@ -159,6 +170,21 @@ def format_temp(t):
     return f"{t:.0f}°C"
 
 
+def is_emergency(cpu, hdds, nvmes):
+    """
+    Returns True if any sensor breaches its emergency threshold.
+    HDDs are checked individually — permanent damage occurs before CPU thermal throttling.
+    This check has absolute priority over all profile formulas.
+    """
+    if cpu >= EMERGENCY_CPU:
+        return True
+    if any(t >= EMERGENCY_HDD for t in hdds):
+        return True
+    if any(t >= EMERGENCY_NVME for t in nvmes):
+        return True
+    return False
+
+
 def calculate_pwm(profile_name, cpu_temp, hdd_avg):
     if profile_name == "silent":
         pwm_cpu = 3 * cpu_temp - 51
@@ -169,7 +195,7 @@ def calculate_pwm(profile_name, cpu_temp, hdd_avg):
     else:
         pwm_cpu = 2 * cpu_temp + 48
 
-    pwm_hdd = 6 * hdd_avg - 104 if hdd_avg is not None else 0
+    pwm_hdd = 15 * hdd_avg - 500 if hdd_avg is not None else 0
 
     pwm = max(pwm_cpu, pwm_hdd)
     pwm = max(PWM_MIN, min(PWM_MAX, int(pwm)))
@@ -231,10 +257,13 @@ def control():
 
     cpu = temps.get("CPU", 0)
     hdds = [v for k, v in temps.items() if k.startswith("HDD")]
+    nvmes = [v for k, v in temps.items() if k.startswith("NVMe")]
     hdd_avg = round(sum(hdds) / len(hdds), 1) if hdds else None
 
-    if cpu >= TEMP_EMERGENCY:
+    # Emergency check — absolute priority over all formulas
+    if is_emergency(cpu, hdds, nvmes):
         new_pwm = 255
+        print(f"EMERGENCY: CPU:{cpu}°C HDDs:{hdds} NVMes:{nvmes} → PWM:255")
     else:
         new_pwm = calculate_pwm(profile_name, cpu, hdd_avg)
 
