@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
+"""
+TrueFan email relay — runs on the TrueNAS host (outside the container).
+Receives HTTP POST requests from the container and sends emails via midclt.
+"""
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import subprocess
-import os
 
 PORT = 5003
-API_KEY_FILE = "/mnt/nas/apps/truefan/truenas_api_key.env"
 
-def get_api_key():
-    with open(API_KEY_FILE) as f:
-        for line in f:
-            if line.startswith("TRUENAS_API_KEY="):
-                return line.strip().split("=", 1)[1].strip('"')
-    return None
 
 class WebhookHandler(BaseHTTPRequestHandler):
+
     def do_POST(self):
         if self.path == "/send":
             length = int(self.headers.get("Content-Length", 0))
@@ -38,7 +35,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        pass  # suppress default logging
+        pass  # suppress default access logging
+
 
 print(f"Mail webhook listening on port {PORT}", flush=True)
 HTTPServer(("0.0.0.0", PORT), WebhookHandler).serve_forever()
