@@ -26,6 +26,7 @@ All credit for the original concept and base implementation goes to the original
 - Dark mode
 - CSV export with semicolon separator (Excel compatible)
 - Zero RPM glitch filter (3 consecutive readings required to confirm fan stop)
+- Automatic host IP detection — no manual network configuration required
 - Removed container management buttons (restart, shutdown)
 
 ## Hardware Requirements
@@ -61,15 +62,6 @@ Then add a second Init/Shutdown Script:
 - Command:
 ```
 nohup python3 /mnt/nas/apps/truefan/mail_webhook.py &
-```
-
-### 3. Update the NAS IP address
-
-Edit `app/mail_webhook.py` and `app/fan.py` replacing `192.168.0.157` with your TrueNAS IP address:
-
-In `fan.py`:
-```python
-MAIL_WEBHOOK = "http://<YOUR_NAS_IP>:5003/send"
 ```
 
 ## Installation via TrueNAS Apps
@@ -173,9 +165,9 @@ Fan speed is calculated directly from temperature. The reference temperature is 
 | Balanced | PWM = 2T + 48 | 1000 rpm | ~40°C |
 | Performance | PWM = T + 152 | 1200 rpm | ~36°C |
 
-HDD override: `PWM = 6 × HDD_avg − 104` — applied if higher than the CPU-based value.
+HDD override: `PWM = 15 × HDD_avg − 500` — applied if higher than the CPU-based value.
 
-Emergency: if any temperature exceeds 55°C, PWM is set to 255 regardless of profile.
+Emergency: One separate function it checks each HDD (≥55°C), CPU (≥80°C) y NVMe (≥70C) individually; if any temperature exceeds, PWM is set to 255 regardless of profile.
 
 The control loop runs every 30 seconds.
 
