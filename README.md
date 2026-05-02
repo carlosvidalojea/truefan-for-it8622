@@ -13,7 +13,7 @@ All credit for the original concept and base implementation goes to the original
 
 ## What's different from the original
 
-- Rewritten sensor parser compatible with the IT8622 driver output format 
+- Rewritten sensor parser compatible with the IT8622 driver output format
 - Temperature-based PWM control using direct formulas per profile (no PID loop)
 - Three profiles: Silent, Balanced, Performance — each with its own RPM floor and formula
 - Named temperature display: CPU, Motherboard, HDD 1–4, NVMe 1–2
@@ -26,7 +26,8 @@ All credit for the original concept and base implementation goes to the original
 - Dark mode
 - CSV export with semicolon separator (Excel compatible)
 - Zero RPM glitch filter (3 consecutive readings required to confirm fan stop)
-- Automatic host IP detection — no manual network configuration required
+- Automatic host IP detection via `extra_hosts` — no manual network configuration required
+- Enhanced HDD protection with per-disk emergency threshold and absolute PWM priority
 - Removed container management buttons (restart, shutdown)
 
 ## Hardware Requirements
@@ -64,6 +65,8 @@ Then add a second Init/Shutdown Script:
 nohup python3 /mnt/nas/apps/truefan/mail_webhook.py &
 ```
 
+> The container reaches the host webhook via `host-gateway` — automatically resolved by Docker's `extra_hosts` mechanism. No manual IP configuration needed.
+
 ## Installation via TrueNAS Apps
 
 Go to **Apps > Discover Apps > Custom App** and paste the following `docker-compose.yaml`:
@@ -72,16 +75,18 @@ Go to **Apps > Discover Apps > Custom App** and paste the following `docker-comp
 services:
   truefan:
     container_name: truefan
-    image: carlosvidalojea/truefan-for-it8622:latest
-    ports:
-      - '5002:5002'
     environment:
       - TZ=Europe/Madrid
+    extra_hosts:
+      - host-gateway:host-gateway
+    image: carlosvidalojea/truefan-for-it8622:latest
+    network_mode: bridge
+    ports:
+      - '5002:5002'
     privileged: true
     restart: unless-stopped
     volumes:
-      - /sys:/sys
-      - /dev:/dev
+      - /sys/class/hwmon:/sys/class/hwmon:ro
       - /etc/sensors3.conf:/etc/sensors3.conf:ro
 x-portals:
   - host: 0.0.0.0
@@ -96,6 +101,34 @@ x-portals:
 Access the dashboard at `http://<NAS_IP>:5002`
 
 Default credentials: `admin` / `truefan`
+
+### Security improvements in this configuration
+
+Compared to a naive Docker setup, this yaml minimises the attack surface:
+
+- **`/sys/class/hwmon` mounted read-only** — only the hardware monitoring subsystem is exposed, not the full `/sys` tree
+- **`/dev` not mounted** — sensor data is read via sysfs without needing raw device access
+- **`network_mode: bridge`** — the container keeps its own isolated network namespace; only the specific `host-gateway` hostname is added to reach the host webhook
+- **`privileged: true`** is still required for PWM write access — there is no finer-grained alternative for this hardware
+
+### Profile persistence (optional)
+
+By default the container starts with the `balanced` profile on every restart. If you want the active profile to survive container restarts and recreations, mount a persistent config file:
+
+**1. Create the file on the host:**
+```bash
+echo "profile=balanced" | sudo tee /mnt/nas/apps/truefan/fan_profile.conf
+```
+
+**2. Add the volume to the yaml:**
+```yaml
+volumes:
+  - /sys/class/hwmon:/sys/class/hwmon:ro
+  - /etc/sensors3.conf:/etc/sensors3.conf:ro
+  - /mnt/nas/apps/truefan/fan_profile.conf:/app/fan_profile.conf
+```
+
+Without this volume the container always starts with `balanced`. The profile can still be changed at runtime via the dashboard — it just resets to `balanced` on the next restart.
 
 ## Build from source
 
@@ -117,7 +150,7 @@ truefan-for-it8622/
     ├── fan.py              # Fan control logic and sensor parser
     ├── server.py           # Flask web server and API routes
     ├── mail_webhook.py     # Email relay — copy to NAS host, run outside container
-    ├── fan_profile.conf    # Default profile
+    ├── fan_profile.conf    # Default profile (balanced)
     ├── profiles.json
     └── templates/
         └── index.html      # Web dashboard
@@ -167,11 +200,23 @@ Fan speed is calculated directly from temperature. The reference temperature is 
 
 HDD override: `PWM = 15 × HDD_avg − 500` — applied if higher than the CPU-based value.
 
-Emergency: One separate function it checks each HDD (≥55°C), CPU (≥80°C) y NVMe (≥70C) individually; if any temperature exceeds, PWM is set to 255 regardless of profile.
+### Emergency protection
+
+If any sensor breaches its emergency threshold, PWM is set to **255 immediately**, with absolute priority over all profile formulas. This check runs at the start of every control cycle before any formula is evaluated.
+
+| Sensor | Emergency threshold |
+|--------|-------------------|
+| CPU | 80°C |
+| HDD (each disk individually) | 55°C |
+| NVMe | 70°C |
+
+HDDs are evaluated individually — a single disk reaching 55°C triggers the emergency regardless of the others. This reflects the fact that HDDs can suffer permanent damage before CPU thermal throttling becomes active.
 
 The control loop runs every 30 seconds.
 
 ### Temperature alert thresholds
+
+Email alerts are sent as early warnings, below the emergency thresholds:
 
 | Sensor | Alert | Recovery |
 |--------|-------|----------|
@@ -179,7 +224,7 @@ The control loop runs every 30 seconds.
 | HDD | 50°C | 45°C |
 | NVMe | 65°C | 60°C |
 
-Alerts fire once when the threshold is crossed. Recovery notification is sent when the temperature drops 5°C below the threshold (hysteresis).
+Alerts fire once when the threshold is crossed. A recovery notification is sent when the temperature drops 5°C below the threshold (hysteresis), preventing repeated alerts from normal temperature fluctuations.
 
 ## Web Interface
 
