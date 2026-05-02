@@ -26,16 +26,7 @@ ALERT_HYSTERESIS = 5
 _alert_active = set()
 
 
-def _get_host_ip():
-    """Get the Docker host IP from the default gateway — works inside any Docker container."""
-    try:
-        import subprocess as _sp
-        out = _sp.check_output(["ip", "route", "show", "default"], encoding="utf-8")
-        return out.split()[2]
-    except Exception:
-        return "127.0.0.1"
-
-MAIL_WEBHOOK = f"http://{_get_host_ip()}:5003/send"
+MAIL_WEBHOOK = "http://host-gateway:5003/send"
 
 
 def send_alert(subject, text):
