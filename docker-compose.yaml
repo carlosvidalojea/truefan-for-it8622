@@ -5,35 +5,32 @@
 #   1. Copy app/mail_webhook.py to your NAS storage, e.g.:
 #      cp app/mail_webhook.py /mnt/nas/apps/truefan/mail_webhook.py
 #
-#   2. Add to System > Advanced > Init/Shutdown Scripts (Post Init):
+#   2. Copy app/truefan_agent.py to your NAS storage, e.g.:
+#      cp app/truefan_agent.py /mnt/nas/apps/truefan/truefan_agent.py
+#
+#   3. Add to System > Advanced > Init/Shutdown Scripts (Post Init):
 #      - Command: modprobe it87 force_id=0x8622
 #      - Command: nohup python3 /mnt/nas/apps/truefan/mail_webhook.py &
+#      - Command: sudo sh -c 'python3 /mnt/nas/apps/truefan/truefan_agent.py >> /mnt/nas/apps/truefan/truefan_agent.log 2>&1 &'
 
 services:
   truefan:
     container_name: truefan
+    environment:
+      - TZ=Europe/Madrid        # Set to your local timezone
+    extra_hosts:
+      - host-gateway:host-gateway     # Host IP detection via `extra_hosts`
 
     # Build the image locally from the Dockerfile
     build: .
 
+    network_mode: bridge
     ports:
       - '5002:5002'             # Web dashboard — access at http://<NAS_IP>:5002
-
-    environment:
-      - TZ=Europe/Madrid        # Set to your local timezone
-
-    # Required for direct sysfs PWM access and sensor reading
-    privileged: true
-
     restart: unless-stopped
-
     volumes:
-      # Hardware access — required for fan control and sensor reading
-      - /sys:/sys
-      - /dev:/dev
-
-      # lm-sensors configuration — read-only
-      - /etc/sensors3.conf:/etc/sensors3.conf:ro
+      - /sys/class/hwmon:/sys/class/hwmon:ro
+      - /etc/sensors3.conf:/etc/sensors3.conf:ro      # lm-sensors configuration — read-only
 
 # TrueNAS web portal integration
 x-portals:
@@ -42,3 +39,4 @@ x-portals:
     path: /
     port: 5002
     scheme: http
+

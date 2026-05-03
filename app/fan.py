@@ -1,9 +1,11 @@
 import os
 import re
 import subprocess
+import urllib.request
+import json
 from datetime import datetime
 
-HWMON_PATH = "/sys/class/hwmon/hwmon8"
+HWMON_ROOT = "/sys/class/hwmon"
 PROFILE_FILE = "/app/fan_profile.conf"
 LOG_FILE = "/app/logs/fan.log"
 PWM_CHANNEL = 3
@@ -25,20 +27,44 @@ ALERT_THRESHOLDS = {
 ALERT_HYSTERESIS = 5
 _alert_active = set()
 
+# Host agent endpoints
+PWM_AGENT_URL  = "http://host-gateway:5003"  # runs as root — PWM writes
+MAIL_AGENT_URL = "http://host-gateway:5004"  # runs as truenas_admin — email via midclt
 
-MAIL_WEBHOOK = "http://host-gateway:5003/send"
+
+def _call_agent(base_url: str, path: str, payload: dict) -> bool:
+    try:
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{base_url}{path}", data=data,
+            headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(req, timeout=5)
+        return True
+    except Exception as e:
+        print(f"Agent error ({base_url}{path}): {e}", flush=True)
+        return False
+
+
+def _find_it8x_hwmon():
+    """Dynamically find the hwmon directory for the IT8x chip by driver name."""
+    try:
+        for hwmon in sorted(os.listdir(HWMON_ROOT)):
+            name_file = os.path.join(HWMON_ROOT, hwmon, "name")
+            try:
+                with open(name_file) as f:
+                    if f.read().strip().startswith("it8"):
+                        return os.path.join(HWMON_ROOT, hwmon)
+            except OSError:
+                continue
+    except Exception:
+        pass
+    return None
 
 
 def send_alert(subject, text):
-    try:
-        import urllib.request
-        import json as _json
-        data = _json.dumps({"subject": subject, "text": text}).encode()
-        req = urllib.request.Request(MAIL_WEBHOOK, data=data, headers={"Content-Type": "application/json"})
-        urllib.request.urlopen(req, timeout=5)
-        print(f"Alert sent: {subject}", flush=True)
-    except Exception as e:
-        print(f"Alert error: {e}", flush=True)
+    _call_agent(MAIL_AGENT_URL, "/mail", {"subject": subject, "text": text})
+    print(f"Alert sent: {subject}", flush=True)
 
 
 def check_temp_alerts(temps):
@@ -204,22 +230,20 @@ def load_profile():
 
 
 def read_current_pwm():
-    try:
-        with open(f"{HWMON_PATH}/pwm{PWM_CHANNEL}", "r") as f:
-            return int(f.read().strip())
-    except:
-        return 125
+    """Read current PWM value from the IT8x hwmon — container has read-only access."""
+    hwmon = _find_it8x_hwmon()
+    if hwmon:
+        try:
+            with open(os.path.join(hwmon, f"pwm{PWM_CHANNEL}"), "r") as f:
+                return int(f.read().strip())
+        except Exception:
+            pass
+    return 125
 
 
 def set_pwm_value(pwm):
-    pwm = max(0, min(255, int(pwm)))
-    try:
-        with open(f"{HWMON_PATH}/pwm{PWM_CHANNEL}_enable", "w") as f:
-            f.write("1")
-        with open(f"{HWMON_PATH}/pwm{PWM_CHANNEL}", "w") as f:
-            f.write(str(pwm))
-    except Exception as e:
-        print(f"Error setting PWM: {e}")
+    """Delegate PWM write to the host PWM agent (runs as root)."""
+    _call_agent(PWM_AGENT_URL, "/pwm", {"value": int(pwm)})
 
 
 def log_status(cpu, hdd_avg, pwm, profile):

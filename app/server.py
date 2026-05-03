@@ -57,11 +57,7 @@ def start_control_loop():
 
 
 def pwm_auto():
-    try:
-        with open(f"{fanlib.HWMON_PATH}/pwm{fanlib.PWM_CHANNEL}_enable", "w") as f:
-            f.write("2")
-    except Exception as e:
-        print(f"Error setting PWM auto: {e}")
+    fanlib._call_agent(fanlib.PWM_AGENT_URL, "/pwm/auto", {})
 
 
 def get_uptime():

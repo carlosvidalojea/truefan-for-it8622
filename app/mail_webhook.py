@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """
-TrueFan email relay — runs on the TrueNAS host (outside the container).
+TrueFan Mail Webhook — must run as a regular TrueNAS user (not root).
 Receives HTTP POST requests from the container and sends emails via midclt.
+Listens on port 5004.
+
+Start manually:
+    nohup python3 /path/to/mail_webhook.py &
 """
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import json
 import subprocess
 
-PORT = 5003
+PORT = 5004
 
 
-class WebhookHandler(BaseHTTPRequestHandler):
-
+class MailHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == "/send":
+        if self.path == "/mail":
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length))
             subject = body.get("subject", "TrueFan Alert")
@@ -35,8 +38,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        pass  # suppress default access logging
+        pass
 
 
 print(f"Mail webhook listening on port {PORT}", flush=True)
-HTTPServer(("0.0.0.0", PORT), WebhookHandler).serve_forever()
+HTTPServer(("0.0.0.0", PORT), MailHandler).serve_forever()

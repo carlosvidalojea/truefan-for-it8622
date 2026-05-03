@@ -27,6 +27,8 @@ All credit for the original concept and base implementation goes to the original
 - CSV export with semicolon separator (Excel compatible)
 - Zero RPM glitch filter (3 consecutive readings required to confirm fan stop)
 - Automatic host IP detection via `extra_hosts` — no manual network configuration required
+- Dynamic IT8x hwmon detection — no hardcoded hwmon path
+- Host agent architecture — no `privileged: true` required in the container
 - Enhanced HDD protection with per-disk emergency threshold and absolute PWM priority
 - Removed container management buttons (restart, shutdown)
 
@@ -36,40 +38,91 @@ All credit for the original concept and base implementation goes to the original
 - Fan connected to PWM channel 3 (`pwm3`)
 - `it87` kernel module support
 
-## Prerequisites — run once on the TrueNAS host
+## Architecture
 
-### 1. Load the IT8622 driver at boot
+TrueFan uses two small Python agents running on the TrueNAS host to handle operations that require host-level access:
 
-Go to **System > Advanced > Init/Shutdown Scripts > Add**:
-- Type: `Command`
-- When: `Post Init`
-- Command:
+```
+Container (no privileged)          TrueNAS Host
+─────────────────────────          ────────────────────────────────
+Reads sensors via hwmon:ro    
+Calculates PWM                →    truefan_agent.py (port 5003, root)
+                                   └── writes PWM to sysfs
+Sends alert / status email    →    mail_webhook.py (port 5004, user)
+                                   └── calls midclt → TrueNAS SMTP
+```
+
+The container communicates with the host agents via `host-gateway`, automatically resolved by Docker's `extra_hosts` mechanism.
+
+## Installation
+
+### Step 1 — Copy host agent files to the NAS
+
+Create a directory on your NAS storage and copy the two agent files there:
+
+```bash
+mkdir -p /mnt/nas/apps/truefan
+cp app/truefan_agent.py /mnt/nas/apps/truefan/
+cp app/mail_webhook.py  /mnt/nas/apps/truefan/
+```
+
+Or download them directly from the repository:
+
+```bash
+mkdir -p /mnt/nas/apps/truefan
+curl -o /mnt/nas/apps/truefan/truefan_agent.py \
+  https://raw.githubusercontent.com/carlosvidalojea/truefan-for-it8622/main/app/truefan_agent.py
+curl -o /mnt/nas/apps/truefan/mail_webhook.py \
+  https://raw.githubusercontent.com/carlosvidalojea/truefan-for-it8622/main/app/mail_webhook.py
+```
+
+### Step 2 — Register Init/Shutdown Scripts
+
+Go to **System > Advanced > Init/Shutdown Scripts** and add three commands, all with **Type: Command** and **When: Post Init**:
+
+**Script 1 — Load IT8622 driver:**
 ```
 modprobe it87 force_id=0x8622
 ```
 
-### 2. Set up the email relay
-
-The email system requires a small webhook server running on the TrueNAS host (outside the container), because `midclt` — the TrueNAS mail command — is not available inside Docker containers.
-
-Copy the webhook to your NAS storage:
-```bash
-cp app/mail_webhook.py /mnt/nas/apps/truefan/mail_webhook.py
+**Script 2 — Start PWM agent (requires root for sysfs writes):**
+```
+sudo sh -c 'python3 /mnt/nas/apps/truefan/truefan_agent.py >> /mnt/nas/apps/truefan/truefan_agent.log 2>&1 &'
 ```
 
-Then add a second Init/Shutdown Script:
-- Type: `Command`
-- When: `Post Init`
-- Command:
+**Script 3 — Start mail webhook (must run as regular user for midclt access):**
 ```
 nohup python3 /mnt/nas/apps/truefan/mail_webhook.py &
 ```
 
-> The container reaches the host webhook via `host-gateway` — automatically resolved by Docker's `extra_hosts` mechanism. No manual IP configuration needed.
+> ⚠️ The mail webhook **must not** run as root — it uses `midclt` to send emails via TrueNAS SMTP, which requires the regular user context. TrueNAS Init Scripts run each command in its own context, so adding it as a separate script is sufficient.
 
-## Installation via TrueNAS Apps
+### Step 3 — Run the init scripts now (no reboot needed)
 
-Go to **Apps > Discover Apps > Custom App** and paste the following `docker-compose.yaml`:
+Open a shell on the TrueNAS host and run the three commands manually to start the agents immediately without rebooting:
+
+```bash
+modprobe it87 force_id=0x8622
+sudo sh -c 'python3 /mnt/nas/apps/truefan/truefan_agent.py >> /mnt/nas/apps/truefan/truefan_agent.log 2>&1 &'
+nohup python3 /mnt/nas/apps/truefan/mail_webhook.py &
+```
+
+Verify both agents are running:
+
+```bash
+# PWM agent — should return {"status":"ok"}
+curl -X POST http://127.0.0.1:5003/pwm \
+  -H "Content-Type: application/json" -d '{"value":128}'
+
+# Mail agent — should send a test email
+curl -X POST http://127.0.0.1:5004/mail \
+  -H "Content-Type: application/json" \
+  -d '{"subject":"TrueFan test","text":"Agents working"}'
+```
+
+### Step 4 — Deploy the container via TrueNAS Apps
+
+Go to **Apps > Discover Apps > Custom App** and paste the following yaml:
 
 ```yaml
 services:
@@ -83,7 +136,6 @@ services:
     network_mode: bridge
     ports:
       - '5002:5002'
-    privileged: true
     restart: unless-stopped
     volumes:
       - /sys/class/hwmon:/sys/class/hwmon:ro
@@ -96,31 +148,21 @@ x-portals:
     scheme: http
 ```
 
-> ⚠️ Adjust `TZ` to your local timezone before deploying.
+> ⚠️ Adjust `TZ` to your local timezone.
 
 Access the dashboard at `http://<NAS_IP>:5002`
 
 Default credentials: `admin` / `truefan`
 
-### Security improvements in this configuration
+### Optional — Profile persistence across restarts
 
-Compared to a naive Docker setup, this yaml minimises the attack surface:
+By default the container starts with the `balanced` profile on every restart. To persist the active profile across container restarts and recreations, create a config file on the host and mount it:
 
-- **`/sys/class/hwmon` mounted read-only** — only the hardware monitoring subsystem is exposed, not the full `/sys` tree
-- **`/dev` not mounted** — sensor data is read via sysfs without needing raw device access
-- **`network_mode: bridge`** — the container keeps its own isolated network namespace; only the specific `host-gateway` hostname is added to reach the host webhook
-- **`privileged: true`** is still required for PWM write access — there is no finer-grained alternative for this hardware
-
-### Profile persistence (optional)
-
-By default the container starts with the `balanced` profile on every restart. If you want the active profile to survive container restarts and recreations, mount a persistent config file:
-
-**1. Create the file on the host:**
 ```bash
-echo "profile=balanced" | sudo tee /mnt/nas/apps/truefan/fan_profile.conf
+echo "profile=balanced" > /mnt/nas/apps/truefan/fan_profile.conf
 ```
 
-**2. Add the volume to the yaml:**
+Add this volume to the yaml:
 ```yaml
 volumes:
   - /sys/class/hwmon:/sys/class/hwmon:ro
@@ -128,7 +170,7 @@ volumes:
   - /mnt/nas/apps/truefan/fan_profile.conf:/app/fan_profile.conf
 ```
 
-Without this volume the container always starts with `balanced`. The profile can still be changed at runtime via the dashboard — it just resets to `balanced` on the next restart.
+Without this volume, the container always starts with `balanced`. The profile can still be changed at runtime via the dashboard — it just resets on the next restart.
 
 ## Build from source
 
@@ -143,17 +185,18 @@ docker build -t truefan-for-it8622 .
 ```
 truefan-for-it8622/
 ├── Dockerfile
-├── entrypoint.sh           # Container startup script
-├── docker-compose.yaml     # For building locally
+├── entrypoint.sh               # Container startup script
+├── docker-compose.yaml         # For building locally
 ├── README.md
 └── app/
-    ├── fan.py              # Fan control logic and sensor parser
-    ├── server.py           # Flask web server and API routes
-    ├── mail_webhook.py     # Email relay — copy to NAS host, run outside container
-    ├── fan_profile.conf    # Default profile (balanced)
+    ├── fan.py                  # Fan control logic and sensor parser
+    ├── server.py               # Flask web server and API routes
+    ├── truefan_agent.py        # PWM agent — copy to NAS host, run as root
+    ├── mail_webhook.py         # Mail agent — copy to NAS host, run as user
+    ├── fan_profile.conf        # Default profile (balanced)
     ├── profiles.json
     └── templates/
-        └── index.html      # Web dashboard
+        └── index.html          # Web dashboard
 ```
 
 ## Fan Control
@@ -202,15 +245,13 @@ HDD override: `PWM = 15 × HDD_avg − 500` — applied if higher than the CPU-b
 
 ### Emergency protection
 
-If any sensor breaches its emergency threshold, PWM is set to **255 immediately**, with absolute priority over all profile formulas. This check runs at the start of every control cycle before any formula is evaluated.
+If any sensor breaches its emergency threshold, PWM is set to **255 immediately**, with absolute priority over all profile formulas. HDDs are evaluated individually — a single disk at 55°C triggers the emergency regardless of the others.
 
 | Sensor | Emergency threshold |
 |--------|-------------------|
 | CPU | 80°C |
 | HDD (each disk individually) | 55°C |
 | NVMe | 70°C |
-
-HDDs are evaluated individually — a single disk reaching 55°C triggers the emergency regardless of the others. This reflects the fact that HDDs can suffer permanent damage before CPU thermal throttling becomes active.
 
 The control loop runs every 30 seconds.
 
@@ -224,7 +265,7 @@ Email alerts are sent as early warnings, below the emergency thresholds:
 | HDD | 50°C | 45°C |
 | NVMe | 65°C | 60°C |
 
-Alerts fire once when the threshold is crossed. A recovery notification is sent when the temperature drops 5°C below the threshold (hysteresis), preventing repeated alerts from normal temperature fluctuations.
+Alerts fire once when the threshold is crossed. A recovery notification is sent when the temperature drops 5°C below the threshold (hysteresis).
 
 ## Web Interface
 
@@ -250,7 +291,7 @@ Alerts fire once when the threshold is crossed. A recovery notification is sent 
 
 ## Known Limitations
 
-- `hwmon8` is hardcoded in `fan.py`. If the kernel reassigns hwmon numbers after an update, the path must be updated manually.
 - The IT8622 driver occasionally reports 0 RPM glitches. The dashboard filters single-cycle zero readings; three consecutive zero readings are treated as a real fan stop.
+- The mail webhook must not run as root. If started from a root context it will fail silently — always start it as a regular user as described in the installation steps.
 - The email webhook must be running on the host for alerts to work. It starts automatically via Init Scripts after each reboot.
 - After activating PWM Manual Control, returning to hardware automatic control via the Auto button may not work in all cases. If the fan does not respond, a container or system restart may be required to restore automatic control.
