@@ -7,7 +7,7 @@ if [ -z "$1" ]; then
 fi
 
 VERSION=$1
-IMAGE="rocketplanner83/truefan"
+IMAGE="carlosvidalojea/truefan-for-it8622"
 
 echo "🚀 Releasing TrueFan v$VERSION"
 
