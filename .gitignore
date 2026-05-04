@@ -1,4 +1,6 @@
 logs/fan.log
+logs/*
+!logs/.gitkeep
 nohup.out
 __pycache__/
 *.pyc
