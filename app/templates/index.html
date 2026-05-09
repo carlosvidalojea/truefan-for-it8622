@@ -1,37 +1,42 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>TrueFan Dashboard</title>
+  <title>TrueFan for TrueNAS</title>
   <meta charset="UTF-8">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='16' fill='%231565C0'/><circle cx='16' cy='16' r='3' fill='white'/><path d='M16 13 Q19 8 23 10 Q21 14 18 14Z' fill='white'/><path d='M16 13 Q19 8 23 10 Q21 14 18 14Z' fill='white' transform='rotate(120 16 16)'/><path d='M16 13 Q19 8 23 10 Q21 14 18 14Z' fill='white' transform='rotate(240 16 16)'/></svg>">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+  <script src="/static/js/chart.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #fff; }
     .container { margin: 0 auto; max-width: 1200px; padding: 1rem 2rem; }
-    h2 { font-size: 0.75rem; margin: 0 0 0.4rem; text-transform: uppercase; letter-spacing: 0.04em; color: #666; }
+    h2 { font-size: 0.9rem; margin: 0 0 0.4rem; text-transform: uppercase; letter-spacing: 0.04em; color: #555; font-weight: 600; }
     ul { list-style: none; padding-left: 0; margin: 0; }
     li { margin: 0.15rem 0; font-size: 0.85rem; display: flex; align-items: center; gap: 0.5rem; }
     .header { display: flex; justify-content: space-between; align-items: stretch; margin-bottom: 0.75rem; }
     .header h1 { margin: 0; font-size: 1.3rem; color: #333; align-self: center; }
     .header-buttons { display: flex; align-items: stretch; gap: 6px; }
     .header-buttons button { align-self: stretch; }
-    .button { display: inline-block; padding: 0.35rem 0.75rem; background-color: #007BFF; color: white; text-decoration: none; border-radius: 4px; border: none; cursor: pointer; font-size: 0.85rem; }
-    .button:hover { background-color: #0056b3; }
-    button { padding: 0.35rem 0.75rem; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-    button:hover { background-color: #1e7e34; }
+    /* All buttons use the same blue base — green only when active-profile */
+    .button, button {
+      display: inline-block; padding: 0.35rem 0.75rem;
+      background-color: #007BFF; color: white;
+      text-decoration: none; border-radius: 4px; border: none;
+      cursor: pointer; font-size: 0.85rem; font-weight: normal;
+    }
+    .button:hover, button:hover { background-color: #0056b3; }
     .neutral { background-color: #6c757d; }
     .neutral:hover { background-color: #545b62; }
     .top-row { display: grid; grid-template-columns: 0.8fr 1.2fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem; }
     .card { border: 1px solid #ddd; border-radius: 6px; padding: 0.6rem 0.9rem; background: #f9f9f9; }
     .card p { margin: 0.2rem 0; font-size: 0.85rem; }
     .profile-btns { display: flex; gap: 6px; margin-top: 4px; }
+    .profile-btns .button { flex: 1; text-align: center; }
     @media (max-width: 799px) {
       .profile-btns { flex-wrap: wrap; }
       .top-row { grid-template-columns: 1fr; }
       .header-buttons { flex-wrap: wrap; }
     }
     .sensor-row { display: grid; grid-template-columns: 160px 1fr; gap: 0.75rem; align-items: center; margin-bottom: 0.6rem; }
-    .sensor-label { font-size: 0.9rem; font-weight: bold; color: #333; margin-bottom: 0.2rem; }
+    .sensor-label { font-size: 1.0rem; font-weight: 600; color: #333; margin-bottom: 0.2rem; }
     .sensor-legends { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
     .sensor-legend { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; color: #888; }
     .legend-line { display: inline-block; width: 20px; height: 2px; border-radius: 1px; flex-shrink: 0; }
@@ -47,6 +52,23 @@
     .dark-mode li { color: #f0f0f0; }
     .dark-mode .alert { background-color: #3a1e1e; color: #ffcccc; }
     .dark-mode .sensor-legend { color: #aaa; }
+    .emergency-banner {
+      display: none;
+      background: #dc3545;
+      color: white;
+      text-align: center;
+      padding: 0.5rem 1rem;
+      font-weight: bold;
+      font-size: 0.9rem;
+      border-radius: 6px;
+      margin-bottom: 0.75rem;
+      animation: pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+    .alert-warning { background-color: #fff3cd; border-color: #ffc107; color: #856404; }
     .active-profile { background-color: #28a745 !important; color: white !important; border: 2px solid #1e7e34 !important; }
     .load-bar-wrap { margin-top: 6px; }
     .load-bar-header { font-size: 0.85rem; display: flex; justify-content: space-between; margin-bottom: 4px; }
@@ -60,23 +82,59 @@
     .load-dot { display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
     .dark-mode .bar-container { background: #444; }
     .dark-mode .load-legend { color: #aaa; }
+
+    /* Modals */
+    .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; }
+    .modal-overlay.open { display:flex; }
+    .modal-box { background:var(--bg,#fff); border-radius:8px; padding:1.25rem; width:90%; max-width:48rem; max-height:90vh; overflow-y:auto; box-shadow:0 8px 32px rgba(0,0,0,0.25); }
+    .dark-mode .modal-box { background:#1e1e1e; color:#f0f0f0; }
+    .modal-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; }
+    .modal-header h2 { font-size:1rem; font-weight:600; margin:0; text-transform:none; letter-spacing:0; color:inherit; }
+    .modal-footer { display:flex; gap:8px; justify-content:flex-end; margin-top:1rem; }
+    .toggle-wrap { display:flex; align-items:center; gap:8px; font-size:13px; }
+    .toggle-track { width:36px; height:18px; border-radius:9px; background:#ccc; position:relative; cursor:pointer; transition:background 0.2s; }
+    .toggle-track.on { background:#28a745; }
+    .toggle-thumb { width:14px; height:14px; background:white; border-radius:50%; position:absolute; top:2px; left:2px; transition:left 0.2s; }
+    .toggle-track.on .toggle-thumb { left:20px; }
+    /* Schedule grid */
+    .sched-grid-wrap { overflow-x:auto; margin-bottom:8px; }
+    .sched-table { border-collapse:collapse; font-size:11px; }
+    .sched-table th { padding:2px 4px; color:#888; font-weight:normal; text-align:center; min-width:1.5em; }
+    .sched-table td.day-label { font-size:14px; color:#888; padding-right:6px; white-space:nowrap; }
+    .sched-table td.cell { width:3em; height:3vh; cursor:pointer; border:1px solid rgba(128,128,128,0.15); }
+    .sched-table td.cell.balanced { background:#6c757d; }
+    .sched-table td.cell.silent   { background:#fbbc05; }
+    .sched-table td.cell.cool     { background:#ea4335; }
+    .sched-legend { display:flex; gap:12px; font-size:14px; color:#888; margin-bottom:4px; flex-wrap:wrap; }
+    .sched-legend span { display:flex; align-items:center; gap:4px; }
+    .leg-dot { width:10px; height:10px; border-radius:2px; display:inline-block; }
+    .sched-hint { font-size:14px; color:#aaa; margin-bottom:8px; }
+    /* Log modal */
+    .log-stat { font-size:12px; color:#888; margin-bottom:12px; }
+    .log-section-title { font-size:13px; font-weight:600; margin-bottom:4px; }
+    .log-desc { font-size:11px; color:#888; margin-bottom:8px; }
+    .check-row { display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:4px; }
+    .log-divider { border:none; border-top:0.5px solid #ddd; margin:12px 0; }
+    .dark-mode .log-divider { border-color:#444; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
-      <h1>TrueFan Dashboard</h1>
+      <h1>TrueFan for TrueNAS · <span id="chipName">it8xxx</span></h1>
       <div class="header-buttons">
-        <button class="neutral" onclick="toggleDarkMode()">🌓</button>
-        <button class="neutral" onclick="exportCSV()">Download CSV</button>
-        <button class="neutral" onclick="sendStatusEmail()">📧 Send Status</button>
+        <button class="neutral" onclick="toggleDarkMode()" title="Toggle dark mode"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></button>
+        <button class="neutral" id="btn-schedule" onclick="openSchedule()" title="Configure scheduled fan profiles"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg> Fan Schedule</button>
+        <button class="neutral" onclick="openLogs()" title="Download log data"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Download Logs</button>
+        <button class="neutral" onclick="sendStatusEmail()" title="Send current status and temperatures by email"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg> Send Status Email</button>
       </div>
     </div>
 
+    <div id="emergencyBanner" class="emergency-banner">🔴 EMERGENCY — Temperature critical, PWM at maximum</div>
     <div class="top-row">
       <div class="card">
         <h2>Status</h2>
-        <p><strong>Uptime:</strong> <span id="uptime">Loading...</span></p>
+        <p><strong>PWM:</strong> <span id="currentPwm">—</span></p>
         <div class="load-bar-wrap">
           <div class="load-bar-header">
             <strong>CPU Load</strong>
@@ -98,9 +156,9 @@
         <h2>Fan Profiles</h2>
         <p style="font-size:0.8rem; margin: 0 0 0.4rem;"><strong>Active:</strong> <span id="profile">Loading...</span></p>
         <div class="profile-btns">
-          <button id="btn-silent" class="button" onclick="setProfile('silent')">Silent</button>
-          <button id="btn-balanced" class="button" onclick="setProfile('balanced')">Balanced</button>
-          <button id="btn-performance" class="button" onclick="setProfile('performance')">Performance</button>
+          <button id="btn-silent" class="button" onclick="setProfile('silent')" title="Silent — low RPM, target ~44°C">Silent</button>
+          <button id="btn-balanced" class="button" onclick="setProfile('balanced')" title="Balanced — moderate RPM, target ~40°C">Balanced</button>
+          <button id="btn-cool" class="button" onclick="setProfile('cool')" title="Cool — higher RPM, target ~36°C">Cool</button>
         </div>
       </div>
       <div class="card">
@@ -108,8 +166,10 @@
         <div class="pwm-row">
           <input type="range" min="0" max="255" value="128" class="slider" id="pwmSlider">
           <span id="pwmValue">128</span>
-          <button onclick="applyPWM()">Apply</button>
-          <button id="btn-auto" class="neutral" onclick="setAuto()" title="Return fan to hardware auto control">Auto</button>
+        </div>
+        <div class="profile-btns" style="margin-top:6px;">
+          <button id="btn-apply" class="button" onclick="applyPWM()" title="Apply PWM value manually — switches to manual control">Apply</button>
+          <button id="btn-auto" class="button" onclick="setAuto()" title="Return fan to hardware automatic control">Auto</button>
         </div>
       </div>
     </div>
@@ -139,7 +199,71 @@
     </div>
 
     <div id="alertBox" class="hidden"></div>
+  
+  <!-- Schedule Modal -->
+  <div id="schedModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>TrueFan Schedule</h2>
+        <div class="toggle-wrap">
+          <span>Schedule</span>
+          <div id="schedToggle" class="toggle-track" onclick="toggleSchedule()">
+            <div class="toggle-thumb"></div>
+          </div>
+          <span id="schedToggleLabel">OFF</span>
+        </div>
+      </div>
+      <div class="sched-hint">Click a cell to cycle: Balanced → Silent → Cool. Right-click to set Balanced.</div>
+      <div class="sched-grid-wrap">
+        <table class="sched-table" id="schedTable">
+          <thead><tr id="schedHourRow"></tr></thead>
+          <tbody id="schedBody"></tbody>
+        </table>
+      </div>
+      <div class="sched-legend">
+        <span><span class="leg-dot" style="background:#6c757d"></span>Balanced</span>
+        <span><span class="leg-dot" style="background:#fbbc05"></span>Silent</span>
+        <span><span class="leg-dot" style="background:#ea4335"></span>Cool</span>
+      </div>
+      <div class="modal-footer">
+        <button class="button" style="background:#6c757d" onclick="closeSchedule()">Cancel</button>
+        <button class="button" onclick="saveSchedule()">Apply</button>
+      </div>
+    </div>
   </div>
+
+  <!-- Logs Modal -->
+  <div id="logsModal" class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2>Download Logs</h2>
+        <button class="button" style="background:#6c757d;padding:0.2rem 0.6rem" onclick="closeLogs()">✕</button>
+      </div>
+      <div class="log-stat" id="logStat">Loading...</div>
+
+      <div class="log-section-title">Export as CSV</div>
+      <div class="log-desc">Select columns to include:</div>
+      <div class="check-row"><input type="checkbox" id="col-timestamp" checked><label for="col-timestamp">Timestamp</label></div>
+      <div class="check-row"><input type="checkbox" id="col-cpu" checked><label for="col-cpu">CPU temp</label></div>
+      <div class="check-row"><input type="checkbox" id="col-hdd" checked><label for="col-hdd">HDD avg temp</label></div>
+      <div class="check-row"><input type="checkbox" id="col-nvme"><label for="col-nvme">NVMe avg temp</label></div>
+      <div class="check-row"><input type="checkbox" id="col-rpm" checked><label for="col-rpm">Fan RPM</label></div>
+      <div class="check-row"><input type="checkbox" id="col-pwm" checked><label for="col-pwm">PWM</label></div>
+      <div class="check-row"><input type="checkbox" id="col-profile"><label for="col-profile">Profile</label></div>
+
+      <hr class="log-divider">
+
+      <div class="log-section-title">Full log</div>
+      <div class="log-desc">Raw log file as plain text (.log)</div>
+
+      <div class="modal-footer">
+        <button class="button" style="background:#6c757d" onclick="closeLogs()">Cancel</button>
+        <button class="button" onclick="downloadLogCSV()">Download CSV</button>
+        <button class="button" onclick="downloadFullLog()">Download Full Log</button>
+      </div>
+    </div>
+  </div>
+</div>
 
   <script>
     const MAX_DISPLAY = 20;
@@ -157,7 +281,7 @@
     applyStoredTheme();
 
     function clearAllActive() {
-      ["silent", "balanced", "performance", "auto"].forEach(p => {
+      ["silent", "balanced", "cool", "auto", "apply"].forEach(p => {
         document.getElementById(`btn-${p}`)?.classList.remove("active-profile");
       });
     }
@@ -169,8 +293,15 @@
 
     function setProfile(profile) {
       fetch(`/set/${profile}`, { method: "POST" })
-        .then(r => r.json())
+        .then(r => {
+          if (r.status === 403) {
+            showAlert("Schedule is active — disable it first via Fan Schedule.", true);
+            return null;
+          }
+          return r.json();
+        })
         .then(d => {
+          if (!d) return;
           document.getElementById("profile").textContent = d.profile;
           highlightProfile(d.profile.trim());
           showAlert(`Profile set to ${d.profile}`);
@@ -180,11 +311,16 @@
 
     function setAuto() {
       fetch('/auto', { method: "POST" })
-        .then(() => {
+        .then(r => r.json())
+        .then(d => {
           document.getElementById("profile").textContent = "Hardware Auto";
           clearAllActive();
           document.getElementById("btn-auto")?.classList.add("active-profile");
-          showAlert("Fan returned to hardware automatic control");
+          document.getElementById("btn-schedule")?.classList.remove("active-profile");
+          const msg = d.schedule_disabled
+            ? "Schedule disabled. Fan returned to hardware automatic control."
+            : "Fan returned to hardware automatic control.";
+          showAlert(msg);
         })
         .catch(err => showAlert("Error: " + err.message));
     }
@@ -192,9 +328,18 @@
     function applyPWM() {
       const val = document.getElementById("pwmSlider").value;
       fetch(`/pwm/${val}`, { method: "POST" })
-        .then(() => {
+        .then(r => {
+          if (r.status === 403) {
+            showAlert("Schedule is active — disable it first via Fan Schedule.", true);
+            return null;
+          }
+          return r.json();
+        })
+        .then(d => {
+          if (!d) return;
           document.getElementById("profile").textContent = "PWM Manual";
           clearAllActive();
+          document.getElementById("btn-apply").classList.add("active-profile");
           showAlert(`PWM set to ${val}`);
         });
     }
@@ -243,6 +388,8 @@
       updateSensors();
       setInterval(updateStatus, 10000);
       updateStatus();
+      // Init schedule button state
+      fetch('/schedule').then(r=>r.json()).then(d=>updateScheduleButton(d.enabled));
     };
 
     function avg(arr) {
@@ -327,12 +474,119 @@
       }
     }
 
-    function showAlert(msg) {
+    function showAlert(msg, warning=false) {
       const alertBox = document.getElementById("alertBox");
       alertBox.textContent = msg;
-      alertBox.className = 'alert';
+      alertBox.className = warning ? 'alert alert-warning' : 'alert';
       alertBox.style.display = 'block';
       setTimeout(() => { alertBox.style.display = 'none'; }, 5000);
+    }
+
+    // ── Schedule modal ──────────────────────────────────────────
+    const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const PROFILES = ['balanced','silent','cool'];
+    const PROF_COLORS = {balanced:'#6c757d', silent:'#fbbc05', cool:'#ea4335'};
+    let schedData = {enabled: false, grid: []};
+
+    function openSchedule() {
+      fetch('/schedule').then(r=>r.json()).then(data => {
+        schedData = data;
+        if (!schedData.grid || schedData.grid.length !== 7) {
+          schedData.grid = Array.from({length:7}, ()=>Array(24).fill('balanced'));
+        }
+        buildScheduleGrid();
+        const t = document.getElementById('schedToggle');
+        const l = document.getElementById('schedToggleLabel');
+        if (schedData.enabled) { t.classList.add('on'); l.textContent='ON'; }
+        else { t.classList.remove('on'); l.textContent='OFF'; }
+        document.getElementById('schedModal').classList.add('open');
+      });
+    }
+
+    function updateScheduleButton(enabled) {
+      const btn = document.getElementById('btn-schedule');
+      if (!btn) return;
+      if (enabled) btn.classList.add('active-profile');
+      else btn.classList.remove('active-profile');
+    }
+
+    function closeSchedule() {
+      document.getElementById('schedModal').classList.remove('open');
+    }
+
+    function toggleSchedule() {
+      schedData.enabled = !schedData.enabled;
+      const t = document.getElementById('schedToggle');
+      const l = document.getElementById('schedToggleLabel');
+      if (schedData.enabled) { t.classList.add('on'); l.textContent='ON'; }
+      else { t.classList.remove('on'); l.textContent='OFF'; }
+    }
+
+    function buildScheduleGrid() {
+      const thead = document.getElementById('schedHourRow');
+      thead.innerHTML = '<th></th>' + Array.from({length:24},(_,h)=>`<th>${h}</th>`).join('');
+      const tbody = document.getElementById('schedBody');
+      tbody.innerHTML = '';
+      DAYS.forEach((day, di) => {
+        const tr = document.createElement('tr');
+        const td0 = document.createElement('td');
+        td0.className = 'day-label'; td0.textContent = day;
+        tr.appendChild(td0);
+        for (let h=0; h<24; h++) {
+          const td = document.createElement('td');
+          const prof = schedData.grid[di][h] || 'balanced';
+          td.className = `cell ${prof}`;
+          td.style.background = PROF_COLORS[prof];
+          td.addEventListener('click', () => {
+            const cur = PROFILES.indexOf(schedData.grid[di][h]||'balanced');
+            const next = PROFILES[(cur+1)%3];
+            schedData.grid[di][h] = next;
+            td.className = `cell ${next}`;
+            td.style.background = PROF_COLORS[next];
+          });
+          td.addEventListener('contextmenu', e => {
+            e.preventDefault();
+            schedData.grid[di][h] = 'balanced';
+            td.className = 'cell balanced';
+            td.style.background = PROF_COLORS.balanced;
+          });
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      });
+    }
+
+    function saveSchedule() {
+      fetch('/schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(schedData)})
+        .then(()=>{
+          closeSchedule();
+          updateScheduleButton(schedData.enabled);
+          showAlert(schedData.enabled ? 'Schedule saved and active.' : 'Schedule saved (disabled).');
+        })
+        .catch(err=>showAlert('Error saving schedule: '+err.message));
+    }
+
+    // ── Logs modal ───────────────────────────────────────────────
+    function openLogs() {
+      fetch('/log/lines').then(r=>r.json()).then(data => {
+        document.getElementById('logStat').textContent =
+          `Log file: ${data.lines.toLocaleString()} lines · limit ${data.max.toLocaleString()} lines`;
+      });
+      document.getElementById('logsModal').classList.add('open');
+    }
+
+    function closeLogs() {
+      document.getElementById('logsModal').classList.remove('open');
+    }
+
+    function downloadLogCSV() {
+      const cols = ['timestamp','cpu','hdd','nvme','rpm','pwm','profile']
+        .filter(c => document.getElementById('col-'+c)?.checked);
+      window.location = '/log/csv?cols=' + cols.join(',');
+    }
+
+    function downloadFullLog() {
+      window.location = '/log/download';
     }
 
     function sendStatusEmail() {
@@ -368,13 +622,37 @@
         .then(data => {
           const p = data.profile;
           if (p === 'manual') {
-            document.getElementById('profile').textContent = 'PWM Manual';
-            clearAllActive();
+            // Preserve whichever manual mode button is currently active (Auto or Apply)
+            const autoActive = document.getElementById('btn-auto')?.classList.contains('active-profile');
+            const applyActive = document.getElementById('btn-apply')?.classList.contains('active-profile');
+            if (!autoActive && !applyActive) {
+              document.getElementById('profile').textContent = 'PWM Manual';
+              clearAllActive();
+            } else if (autoActive) {
+              document.getElementById('profile').textContent = 'Hardware Auto';
+            }
           } else {
             document.getElementById('profile').textContent = p;
             highlightProfile(p.trim());
           }
-          document.getElementById('uptime').textContent = data.uptime;
+          // PWM current value
+          if (data.pwm !== undefined) {
+            document.getElementById('currentPwm').textContent = data.pwm;
+          }
+
+          // Chip name in title
+          if (data.chip) {
+            document.getElementById('chipName').textContent = data.chip;
+            document.title = 'TrueFan for TrueNAS · ' + data.chip;
+          }
+
+          // Emergency banner
+          const banner = document.getElementById('emergencyBanner');
+          if (data.emergency) {
+            banner.style.display = 'block';
+          } else {
+            banner.style.display = 'none';
+          }
 
           const cores = 4;
           const pct1  = Math.min(100, Math.round(data.load['1min']  / cores * 100));

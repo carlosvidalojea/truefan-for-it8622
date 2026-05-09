@@ -3,11 +3,13 @@ import re
 import subprocess
 import urllib.request
 import json
-from datetime import datetime
+from datetime import datetime, time as dtime
 
 HWMON_ROOT = "/sys/class/hwmon"
-PROFILE_FILE = "/app/fan_profile.conf"
-LOG_FILE = "/app/logs/fan.log"
+PROFILE_FILE   = "/app/fan_profile.conf"
+SCHEDULE_FILE  = "/app/fan_schedule.json"
+LOG_FILE       = "/app/logs/fan.log"
+LOG_MAX_LINES  = 32768
 PWM_CHANNEL = 3
 
 PWM_MIN = 50
@@ -26,6 +28,7 @@ ALERT_THRESHOLDS = {
 }
 ALERT_HYSTERESIS = 5
 _alert_active = set()
+_emergency_active = False
 
 # Host agent endpoints
 PWM_AGENT_URL  = "http://host-gateway:5003"  # runs as root — PWM writes
@@ -60,6 +63,19 @@ def _find_it8x_hwmon():
     except Exception:
         pass
     return None
+
+
+def get_chip_name():
+    """Return the IT8x chip identifier, e.g. 'it8622'."""
+    try:
+        output = read_sensors_output()
+        for line in output.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("it8") and "-isa-" in stripped:
+                return stripped.split("-")[0]
+    except Exception:
+        pass
+    return "it8xxx"
 
 
 def send_alert(subject, text):
@@ -207,8 +223,8 @@ def calculate_pwm(profile_name, cpu_temp, hdd_avg):
         pwm_cpu = 3 * cpu_temp - 51
     elif profile_name == "balanced":
         pwm_cpu = 2 * cpu_temp + 48
-    elif profile_name == "performance":
-        pwm_cpu = cpu_temp + 152
+    elif profile_name == "cool":
+        pwm_cpu = cpu_temp + 152  # cool profile
     else:
         pwm_cpu = 2 * cpu_temp + 48
 
@@ -217,6 +233,40 @@ def calculate_pwm(profile_name, cpu_temp, hdd_avg):
     pwm = max(pwm_cpu, pwm_hdd)
     pwm = max(PWM_MIN, min(PWM_MAX, int(pwm)))
     return pwm
+
+
+
+def load_schedule():
+    """Load schedule config. Returns {enabled, grid} where grid is 7x24 list of profile names."""
+    default = {"enabled": False, "grid": [["balanced"]*24 for _ in range(7)]}
+    if not os.path.exists(SCHEDULE_FILE):
+        return default
+    try:
+        with open(SCHEDULE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def save_schedule(data):
+    with open(SCHEDULE_FILE, "w") as f:
+        json.dump(data, f)
+
+
+def get_scheduled_profile():
+    """Return profile name for current day/hour if schedule is enabled, else None."""
+    sched = load_schedule()
+    if not sched.get("enabled"):
+        return None
+    now = datetime.now()
+    day = now.weekday()   # 0=Mon … 6=Sun → remap to 0=Sun
+    day = (day + 1) % 7
+    hour = now.hour
+    grid = sched.get("grid", [])
+    try:
+        return grid[day][hour]
+    except (IndexError, TypeError):
+        return None
 
 
 def load_profile():
@@ -246,10 +296,21 @@ def set_pwm_value(pwm):
     _call_agent(PWM_AGENT_URL, "/pwm", {"value": int(pwm)})
 
 
-def log_status(cpu, hdd_avg, pwm, profile):
+def log_status(cpu, hdd_avg, nvme_avg, rpm, pwm, profile):
     os.makedirs("/app/logs", exist_ok=True)
+    # Rotate log if too large
+    try:
+        with open(LOG_FILE, "r") as f:
+            lines = f.readlines()
+        if len(lines) >= LOG_MAX_LINES:
+            with open(LOG_FILE, "w") as f:
+                f.writelines(lines[-(LOG_MAX_LINES // 2):])
+    except FileNotFoundError:
+        pass
+    nvme_str = f"{nvme_avg:.1f}" if nvme_avg is not None else "N/A"
+    rpm_str  = str(rpm) if rpm is not None else "N/A"
     with open(LOG_FILE, "a") as log:
-        log.write(f"{datetime.now()} - Profile: {profile} | CPU:{cpu}°C HDD_avg:{hdd_avg}°C | PWM:{pwm}\n")
+        log.write(f"{datetime.now()} - Profile:{profile} | CPU:{cpu} | HDD:{hdd_avg} | NVMe:{nvme_str} | RPM:{rpm_str} | PWM:{pwm}\n")
 
 
 def set_profile(name):
@@ -267,23 +328,35 @@ def control():
     if profile_name == "manual":
         return
 
+    # Apply scheduled profile if enabled
+    scheduled = get_scheduled_profile()
+    if scheduled and scheduled != profile_name:
+        profile_name = scheduled
+        set_profile(profile_name)
+
     output = read_sensors_output()
-    temps, _ = parse_all_sensors(output)
+    temps, fans = parse_all_sensors(output)
 
     cpu = temps.get("CPU", 0)
-    hdds = [v for k, v in temps.items() if k.startswith("HDD")]
+    hdds  = [v for k, v in temps.items() if k.startswith("HDD")]
     nvmes = [v for k, v in temps.items() if k.startswith("NVMe")]
-    hdd_avg = round(sum(hdds) / len(hdds), 1) if hdds else None
+    hdd_avg  = round(sum(hdds)  / len(hdds),  1) if hdds  else None
+    nvme_avg = round(sum(nvmes) / len(nvmes), 1) if nvmes else None
+    rpms = [int(v.replace(" RPM","")) for v in fans.values() if "RPM" in v]
+    max_rpm = max(rpms) if rpms else None
 
     # Emergency check — absolute priority over all formulas
+    global _emergency_active
     if is_emergency(cpu, hdds, nvmes):
         new_pwm = 255
+        _emergency_active = True
         print(f"EMERGENCY: CPU:{cpu}°C HDDs:{hdds} NVMes:{nvmes} → PWM:255")
     else:
+        _emergency_active = False
         new_pwm = calculate_pwm(profile_name, cpu, hdd_avg)
 
     set_pwm_value(new_pwm)
-    log_status(cpu, hdd_avg, new_pwm, profile_name)
+    log_status(cpu, hdd_avg, nvme_avg, max_rpm, new_pwm, profile_name)
     print(f"Profile '{profile_name}' | CPU:{cpu}°C HDD_avg:{hdd_avg}°C | PWM:{new_pwm}")
     check_temp_alerts(temps)
 
