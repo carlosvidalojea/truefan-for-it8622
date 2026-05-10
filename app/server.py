@@ -11,8 +11,8 @@ import fan as fanlib
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
-AUTH_USER = "admin"
-AUTH_PASS = "truefan"
+AUTH_USER = os.environ.get("TRUEFAN_USER", "admin")
+AUTH_PASS = os.environ.get("TRUEFAN_PASS", "truefan")
 
 
 def check_auth(username, password):

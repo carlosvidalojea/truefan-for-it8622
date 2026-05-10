@@ -135,6 +135,8 @@ services:
     container_name: truefan
     environment:
       - TZ=Europe/Madrid
+      - TRUEFAN_USER=admin
+      - TRUEFAN_PASS=truefan
     extra_hosts:
       - host-gateway:host-gateway
     image: carlosvidalojea/truefan-for-it8622:latest
@@ -158,7 +160,9 @@ x-portals:
 Access the dashboard at `http://<NAS_IP>:5002`
 
 Default credentials: `admin` / `truefan`
-
+ 
+> To change the credentials, update `TRUEFAN_USER` and `TRUEFAN_PASS` in the `environment` section of the yaml and restart the container. No code changes needed.
+ 
 ### Security notes
 
 - `/sys/class/hwmon` is mounted read-only — only hardware monitoring is exposed
